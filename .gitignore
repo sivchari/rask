@@ -1,0 +1,8 @@
+plan-*.md
+research-*.md
+/bin/
+/dist/
+*.qcow2
+*.img
+*.erofs
+/spikes/**/work/
