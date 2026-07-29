@@ -1,0 +1,13 @@
+.PHONY: build test vet lint
+
+build:
+	go build ./...
+
+test:
+	go test -race -shuffle=on -count=1 ./...
+
+vet:
+	go vet ./...
+
+lint: vet
+	golangci-lint run ./...
