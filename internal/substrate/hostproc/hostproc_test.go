@@ -32,6 +32,22 @@ func TestRuntime_DataDirAndKubeconfigPathAreScopedToHomeDirAndName(t *testing.T)
 	}
 }
 
+func TestRuntime_SeedSourcePathMatchesKineDatastoreLayout(t *testing.T) {
+	t.Parallel()
+
+	homeDir := t.TempDir()
+	r := New(homeDir)
+
+	// Must match the "kine" subdir Start passes to kine.New (dataDir +
+	// "kine") joined with kine.Datastore's own "state.db" filename: this
+	// accessor exists precisely so internal/prebake doesn't have to
+	// hardcode that layout itself.
+	want := filepath.Join(homeDir, "clusters", "dev", "data", "kine", "state.db")
+	if got := r.SeedSourcePath("dev"); got != want {
+		t.Errorf("SeedSourcePath(dev) = %q, want %q", got, want)
+	}
+}
+
 func TestWriteStateReadState_RoundTrips(t *testing.T) {
 	t.Parallel()
 

@@ -76,6 +76,16 @@ func (r *Runtime) cacheDir() string {
 	return filepath.Join(r.homeDir, "cache")
 }
 
+// SeedSourcePath returns the path to the kine SQLite file backing name's
+// datastore, for internal/prebake to copy out as a seed snapshot after
+// Stop. Stop must be called first (not just Create/Start): kine only
+// checkpoints its SQLite WAL into this file on a clean SIGTERM (see
+// internal/store/kine.Datastore.Stop), so reading it while kine is still
+// running could observe a torn/incomplete database.
+func (r *Runtime) SeedSourcePath(name string) string {
+	return filepath.Join(r.dataDir(name), "kine", "state.db")
+}
+
 // timelinePath is where Start writes a human-readable phase breakdown,
 // which "rask create --verbose" reads and prints. A file, like the running
 // marker and PID state, because whatever process printed --verbose's
@@ -146,6 +156,7 @@ func (r *Runtime) Start(ctx context.Context, name string, opts substrate.StartOp
 		Paths:             paths,
 		Datastore:         datastore,
 		ExtraAPIAudiences: opts.ExtraAPIAudiences,
+		SeedPath:          opts.SeedPath,
 	})
 	if err != nil {
 		return fmt.Errorf("hostproc: %w", err)
@@ -181,8 +192,15 @@ func (r *Runtime) Start(ctx context.Context, name string, opts substrate.StartOp
 		return err
 	}
 
-	if err = applyManifests(ctx, result.AdminKubeconfigPath); err != nil {
-		return fmt.Errorf("hostproc: %w", err)
+	// A seeded datastore already contains the CoreDNS and
+	// local-path-provisioner objects (see internal/prebake): re-applying
+	// them would be a harmless no-op (ApplyYAML/ApplyCoreDNS both ignore
+	// AlreadyExists), but skipping the round trip entirely is exactly the
+	// create-time cost seeding exists to shave off.
+	if opts.SeedPath == "" {
+		if err = applyManifests(ctx, result.AdminKubeconfigPath); err != nil {
+			return fmt.Errorf("hostproc: %w", err)
+		}
 	}
 
 	// Created last, once everything else has succeeded: Delete refuses

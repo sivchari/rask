@@ -42,5 +42,9 @@ func newRootCommand(rt substrate.Runtime, homeDir string) *cobra.Command {
 		root.AddCommand(vmHost)
 	}
 
+	if seed := newSeedCommand(rt, homeDir); seed != nil {
+		root.AddCommand(seed)
+	}
+
 	return root
 }

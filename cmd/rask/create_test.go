@@ -9,8 +9,65 @@ import (
 	"testing"
 
 	"github.com/sivchari/rask/internal/cluster"
+	"github.com/sivchari/rask/internal/components"
+	"github.com/sivchari/rask/internal/prebake"
 	"github.com/sivchari/rask/internal/substrate"
 )
+
+func TestCreateCluster_UsesMatchingSeedWhenPresent(t *testing.T) {
+	t.Parallel()
+
+	homeDir := t.TempDir()
+	rt := &fakeRuntime{}
+
+	seedPath := prebake.Path(homeDir, components.DefaultK8sVersion)
+	mustMkdirAll(t, filepath.Dir(seedPath))
+
+	if err := os.WriteFile(seedPath, []byte("fake seed sqlite contents"), 0o644); err != nil {
+		t.Fatalf("writing fake seed file: %v", err)
+	}
+
+	root := newRootCommand(rt, homeDir)
+	root.SetArgs([]string{"create", "cluster", "--name", "dev"})
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute(): %v", err)
+	}
+
+	if len(rt.startOptsCalls) != 1 {
+		t.Fatalf("startOptsCalls = %v, want exactly 1 call", rt.startOptsCalls)
+	}
+
+	if got := rt.startOptsCalls[0].SeedPath; got != seedPath {
+		t.Errorf("StartOptions.SeedPath = %q, want %q", got, seedPath)
+	}
+}
+
+func TestCreateCluster_NoMatchingSeedLeavesSeedPathEmpty(t *testing.T) {
+	t.Parallel()
+
+	homeDir := t.TempDir()
+	rt := &fakeRuntime{}
+
+	root := newRootCommand(rt, homeDir)
+	root.SetArgs([]string{"create", "cluster", "--name", "dev"})
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute(): %v", err)
+	}
+
+	if len(rt.startOptsCalls) != 1 {
+		t.Fatalf("startOptsCalls = %v, want exactly 1 call", rt.startOptsCalls)
+	}
+
+	if got := rt.startOptsCalls[0].SeedPath; got != "" {
+		t.Errorf("StartOptions.SeedPath = %q, want empty (no seed file present)", got)
+	}
+}
 
 func TestCreateCluster_AlreadyExistsRejectsWithoutCallingRuntime(t *testing.T) {
 	t.Parallel()

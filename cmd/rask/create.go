@@ -8,11 +8,13 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/sivchari/rask/internal/cluster"
+	"github.com/sivchari/rask/internal/components"
+	"github.com/sivchari/rask/internal/manifests"
+	"github.com/sivchari/rask/internal/prebake"
 	"github.com/sivchari/rask/internal/substrate"
 )
 
@@ -95,6 +97,17 @@ func createCluster(cmd *cobra.Command, rt substrate.Runtime, homeDir, name, wait
 	// internal/bootstrap.Boot), which is what satisfies the "node"
 	// (default) --wait value; nothing further is needed for it here.
 	opts := substrate.StartOptions{ExtraAPIAudiences: apiAudiences}
+
+	// A seed matching the exact Kubernetes version and default manifest
+	// bundle this build ships (internal/prebake.Key) is used automatically
+	// when present, with no flag needed: it's a pure optimization a
+	// substrate implementation applies before booting (see
+	// internal/substrate/hostproc.Runtime.Start), never a behavior change,
+	// so there's nothing for a caller to opt into.
+	if seedPath := prebake.Path(homeDir, components.DefaultK8sVersion); fileExists(seedPath) {
+		opts.SeedPath = seedPath
+	}
+
 	if err := rt.Start(ctx, name, opts); err != nil {
 		return fmt.Errorf("cluster %q: %w", name, err)
 	}
@@ -116,6 +129,13 @@ func createCluster(cmd *cobra.Command, rt substrate.Runtime, homeDir, name, wait
 	return nil
 }
 
+// fileExists reports whether path exists and is a regular file.
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+
+	return err == nil && !info.IsDir()
+}
+
 // waitForCoreDNS polls the CoreDNS Deployment (applied by
 // internal/manifests during Start) until it reports at least one Ready
 // replica.
@@ -135,18 +155,7 @@ func waitForCoreDNS(ctx context.Context, homeDir, name string) error {
 	waitCtx, cancel := context.WithTimeout(ctx, coreDNSWaitTimeout)
 	defer cancel()
 
-	for {
-		dep, err := clientset.AppsV1().Deployments("kube-system").Get(waitCtx, "coredns", metav1.GetOptions{})
-		if err == nil && dep.Status.ReadyReplicas > 0 {
-			return nil
-		}
-
-		select {
-		case <-waitCtx.Done():
-			return fmt.Errorf("timed out waiting for the coredns Deployment to become Ready: %w", waitCtx.Err())
-		case <-time.After(200 * time.Millisecond):
-		}
-	}
+	return manifests.WaitDeploymentReady(waitCtx, clientset, "kube-system", "coredns")
 }
 
 // printTimeline prints the phase-by-phase boot latency breakdown a

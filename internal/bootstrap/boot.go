@@ -284,6 +284,23 @@ func bootDatastoreAndControlPlane(launchCtx, waitCtx context.Context, cfg Config
 		"--client-ca-file=" + cpki.CACertPath,
 		"--tls-cert-file=" + cpki.APIServerCertPath,
 		"--tls-private-key-file=" + cpki.APIServerKeyPath,
+		// Credential apiserver presents outbound to kubelet's
+		// exec/logs/port-forward streaming server. Without these, that
+		// server rejects apiserver with "Unauthorized" (kubelet's own
+		// authentication.x509.clientCAFile requires a client cert;
+		// anonymous auth is off) — see pki.go's issuance site for why
+		// this cert carries no Organization.
+		"--kubelet-client-certificate=" + cpki.KubeletClientCertPath,
+		"--kubelet-client-key=" + cpki.KubeletClientKeyPath,
+		// apiserver's default preference order tries the Node's Hostname
+		// address (cluster.NodeName, "rask-node") first, which has no DNS
+		// record anywhere rask runs — every exec/logs/port-forward request
+		// would fail node name resolution before it even reached the
+		// kubelet-client-certificate credential above. InternalIP (the
+		// same cfg.NodeIP kubelet was started with, via --node-ip) is
+		// always dialable; kind sets the same InternalIP-first order for
+		// the identical reason.
+		"--kubelet-preferred-address-types=InternalIP,Hostname",
 		"--secure-port=" + strconv.Itoa(apiserverPort),
 		"--advertise-address=" + cfg.NodeIP,
 	}

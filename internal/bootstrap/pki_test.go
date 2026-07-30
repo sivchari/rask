@@ -146,6 +146,66 @@ func TestGeneratePKI_ServiceAccountKeysWrittenAndConsistent(t *testing.T) {
 	}
 }
 
+// TestGeneratePKI_KubeletClientCertIsNarrowlyScopedAndVerifies is a
+// regression test for the apiserver->kubelet exec/logs/port-forward
+// "Unauthorized" gap (see boot.go's --kubelet-client-certificate/-key
+// comment): the issued cert must verify against the generated CA (so
+// kubelet's authentication.x509.clientCAFile accepts it) and must not carry
+// "system:masters" (or any Organization), since it is never used to
+// authenticate to apiserver itself and kubelet's authorization.mode here is
+// AlwaysAllow — see pki.go's issuance site for the full reasoning.
+func TestGeneratePKI_KubeletClientCertIsNarrowlyScopedAndVerifies(t *testing.T) {
+	t.Parallel()
+
+	cpki, err := generatePKI(t.TempDir(), "", "dev")
+	if err != nil {
+		t.Fatalf("generatePKI: %v", err)
+	}
+
+	if cpki.KubeletClientCertPath == "" || cpki.KubeletClientKeyPath == "" {
+		t.Fatal("KubeletClientCertPath/KubeletClientKeyPath not set")
+	}
+
+	certPEM, err := os.ReadFile(cpki.KubeletClientCertPath)
+	if err != nil {
+		t.Fatalf("reading kubelet client cert: %v", err)
+	}
+
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		t.Fatal("pem.Decode returned nil block")
+	}
+
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("ParseCertificate: %v", err)
+	}
+
+	if cert.Subject.CommonName != "kube-apiserver-kubelet-client" {
+		t.Errorf("CommonName = %q, want %q", cert.Subject.CommonName, "kube-apiserver-kubelet-client")
+	}
+
+	if len(cert.Subject.Organization) != 0 {
+		t.Errorf("Organization = %v, want empty (see pki.go issuance comment for why this must not be system:masters)", cert.Subject.Organization)
+	}
+
+	pool := x509.NewCertPool()
+	pool.AddCert(cpki.CA.Cert)
+
+	if _, err := cert.Verify(x509.VerifyOptions{Roots: pool, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil {
+		t.Errorf("kubelet client cert did not verify against the generated CA: %v", err)
+	}
+
+	keyPEM, err := os.ReadFile(cpki.KubeletClientKeyPath)
+	if err != nil {
+		t.Fatalf("reading kubelet client key: %v", err)
+	}
+
+	if block, _ := pem.Decode(keyPEM); block == nil || block.Type != "EC PRIVATE KEY" {
+		t.Error("KubeletClientKeyPath does not contain a PEM-encoded EC PRIVATE KEY")
+	}
+}
+
 // TestGeneratePKI_CAKeyPathIsTheActualCAPrivateKey is a regression test:
 // CAKeyPath used to not exist at all, and boot.go's
 // --cluster-signing-key-file pointed at CACertPath (the certificate, not a

@@ -17,6 +17,12 @@ type StartOptions struct {
 	// TokenReview client (such as haro's projected ServiceAccount token)
 	// that requests a custom audience.
 	ExtraAPIAudiences []string
+
+	// SeedPath, if set, is a prebaked datastore snapshot (see
+	// internal/prebake) to seed the cluster's datastore from before boot,
+	// skipping the cluster bootstrap reconciliation and default manifest
+	// applies the seed already contains.
+	SeedPath string
 }
 
 // Runtime creates, controls and tears down one rask cluster instance on the

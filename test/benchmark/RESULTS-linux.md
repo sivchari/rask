@@ -102,9 +102,70 @@ RUNS=10 WAIT=coredns GO=/path/to/go test/benchmark/bench.sh   # CoreDNS-Ready p5
 Both scripts build `rask` for the VM's actual architecture, drive it via `colima ssh -- sudo`, and
 clean up their own binaries and cluster state on exit (including on failure).
 
+## M3-prep: prebaked seed (`internal/prebake`), cold vs seeded `--wait=coredns`
+
+`internal/prebake` (seed SQLite generation, `rask seed build`, seeded-boot auto-detection in
+`rask create`) is now implemented — see `test/benchmark/PROGRESS-m3prep.md` for the design
+(seed key = k8s version + manifest-bundle digest) and `internal/bootstrap`/`internal/substrate`
+changes. Measured cold vs seeded `rask create cluster --wait coredns` in colima, both scenarios
+using the same warm component-cache, cold-image-cache methodology as the M1 numbers above (every
+run's `rask delete` wipes the cluster's containerd root, so both groups pay a fresh
+CoreDNS/local-path-provisioner image pull identically — this is unrelated to what prebaking
+controls, see "Why `--wait=coredns` is ~4x slower" above; the seed only shaves apiserver's own
+bootstrap reconciliation and the CoreDNS/local-path-provisioner *API apply* round trip, not the
+image pull itself).
+
+### Reference value (n=10 each) — contaminated by a concurrent macOS vz E2E run
+
+**Do not treat as this feature's true baseline.** A second agent's `rask __vm-host` macOS vz VM
+(`Virtualization.framework` XPC process, observed at 20-40% host CPU throughout) was running
+concurrently on this same physical host for the entire measurement, competing for the same cores
+colima's own 2-vCPU guest is scheduled on. Recorded for completeness only, not as the headline
+number:
+
+| scenario | p50 | p95 | mean | min | max | n |
+|---|---|---|---|---|---|---|
+| cold (no seed) | 19.177s | 26.653s | 19.660s | 12.590s | 30.695s | 10 |
+| seeded | 12.592s | 15.805s | 12.492s | 8.939s | 15.953s | 10 |
+
+Even under this contamination, seeded was consistently faster (mean **36.5%** lower, p50 **34.3%**
+lower) — a real signal despite the noise, not just within-noise variance, but the absolute numbers
+above should not be quoted as "what prebaking gets you" since host contention inflated every value
+(both cold's 15.1s p50 baseline from the M1 section above, measured on an otherwise-idle host, and
+this run's own min/max spread, are both consistent with that read).
+
+### Re-measurement (n=3 each) — load average recorded, contamination still partially present
+
+The concurrent vz VM (PID 73577 on the host) could not be stopped (a different, in-progress agent
+session's work, not something this session is authorized to interrupt), so this re-measurement is
+**best-effort, not fully clean** — included for transparency, not as a clean-room number. Host and
+guest load average recorded immediately before and after this run:
+
+| when | host (macOS, 14-core) load avg (1/5/15m) | colima guest (2 vCPU) load avg (1/5/15m) | vz XPC process CPU% observed |
+|---|---|---|---|
+| before | 4.20 / 6.57 / 6.64 | 0.44 / 0.83 / 0.78 | 22.6% |
+| after | 5.21 / 6.09 / 6.42 | 0.38 / 0.67 / 0.72 | 30.7% |
+
+| scenario | mean | median | min | max | n |
+|---|---|---|---|---|---|
+| cold (no seed) | 15.498s | 15.597s | 15.269s | 15.628s | 3 |
+| seeded | 11.916s | 10.971s | 9.790s | 14.988s | 3 |
+
+n=3 is too small for a meaningful p95, and the guest's own load average (0.4-0.8 on 2 vCPUs) looks
+fine in isolation — the contamination is a host-level scheduling effect (macOS scheduling colima's
+vCPU threads against the concurrent vz VM's threads on the same physical cores), not something
+visible from inside the guest. Directionally consistent with the n=10 reference (seeded faster,
+similar ~23% mean reduction here vs ~36% there), but neither run should be read as "the" number for
+apiserver's ~550ms `apiserver_readyz` saving spikes/s1/RESULTS.md found in isolation — that
+component-level number remains the more trustworthy claim about what seeding itself does; these
+`--wait=coredns` wall-clock numbers are dominated by contention and cold image-pull noise on this
+shared, constrained VM. A clean re-run once the host is genuinely idle is the natural follow-up.
+
 ## Deferred (not implemented this session — see final report for full list)
 
-- internal/prebake + tools/prebake (seed SQLite generation, seeded-boot benchmark comparison)
 - Live k3d comparison on this VM (safety reasons, see above)
-- macOS/vz substrate (out of this session's scope; spikes/s2 and s4 already validated its
-  feasibility, per plan-m0-spikes.md)
+- macOS/vz substrate work for `internal/prebake` (seed building has no vz equivalent yet — a vz
+  cluster's datastore lives inside its guest VM's own disk, not on a host-readable path; see
+  `cmd/rask/seed_darwin.go`)
+- A genuinely clean-host cold-vs-seeded re-measurement (both runs in this session had a concurrent
+  macOS vz VM competing for host CPU; see above)

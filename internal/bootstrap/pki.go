@@ -38,6 +38,14 @@ type ClusterPKI struct {
 	SchedulerCertPath         string
 	SchedulerKeyPath          string
 
+	// KubeletClientCertPath and KubeletClientKeyPath are the API server's
+	// own client credential for authenticating outbound to kubelet's
+	// exec/logs/port-forward streaming endpoints (--kubelet-client-certificate
+	// / --kubelet-client-key). See the issuance site below for why this
+	// carries no Organization, unlike kubeadm's own convention.
+	KubeletClientCertPath string
+	KubeletClientKeyPath  string
+
 	AdminKubeconfigPath             string
 	KubeletKubeconfigPath           string
 	ControllerManagerKubeconfigPath string
@@ -143,6 +151,38 @@ func generatePKI(dataDir, advertiseIP, clusterName string) (*ClusterPKI, error) 
 		return nil, err
 	}
 
+	// apiserver's outbound credential to kubelet's exec/logs/port-forward
+	// streaming server (kubelet's authentication.x509.clientCAFile trusts
+	// this same CA). Deliberately issued with no Organization, unlike
+	// kubeadm's "O=system:masters" convention: this cert is only ever
+	// presented outbound by apiserver to kubelet, never used to
+	// authenticate an inbound request to apiserver itself, and kubelet's
+	// authorization.mode here is AlwaysAllow (writeKubeletConfig in
+	// config.go), which grants any authenticated identity regardless of
+	// group. Giving it "system:masters" would add zero function today
+	// while turning it into a second cluster-admin credential on disk
+	// (the same CA authenticates it to apiserver too, if authorization
+	// mode ever changed) for no benefit — narrower stays simple here, so
+	// that's what's used; a group would only start mattering if kubelet's
+	// authorization.mode ever moved to Webhook, at which point a
+	// dedicated RBAC binding for whatever group this cert carries would
+	// need to be added at the same time.
+	kubeletClientCert, err := ca.IssueClient("kube-apiserver-kubelet-client", nil)
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap: issuing apiserver kubelet-client cert: %w", err)
+	}
+
+	kubeletClientCertPath := filepath.Join(pkiDir, "apiserver-kubelet-client.crt")
+	kubeletClientKeyPath := filepath.Join(pkiDir, "apiserver-kubelet-client.key")
+
+	if err := writePEM(kubeletClientCertPath, kubeletClientCert.CertPEM); err != nil {
+		return nil, err
+	}
+
+	if err := writePEM(kubeletClientKeyPath, kubeletClientCert.KeyPEM); err != nil {
+		return nil, err
+	}
+
 	apiserverURL := fmt.Sprintf("https://127.0.0.1:%d", apiserverPort)
 
 	adminKubeconfigPath, adminCert, err := writeClientKubeconfig(ca, kcDir, apiserverURL, clusterName, "admin", "admin", []string{"system:masters"})
@@ -183,6 +223,8 @@ func generatePKI(dataDir, advertiseIP, clusterName string) (*ClusterPKI, error) 
 		ControllerManagerKeyPath:        cmServingKeyPath,
 		SchedulerCertPath:               schedServingCertPath,
 		SchedulerKeyPath:                schedServingKeyPath,
+		KubeletClientCertPath:           kubeletClientCertPath,
+		KubeletClientKeyPath:            kubeletClientKeyPath,
 		AdminKubeconfigPath:             adminKubeconfigPath,
 		KubeletKubeconfigPath:           kubeletKubeconfigPath,
 		ControllerManagerKubeconfigPath: cmKubeconfigPath,
