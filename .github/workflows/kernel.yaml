@@ -1,0 +1,65 @@
+name: kernel
+
+# Builds rask's production arm64 guest kernel Image (tools/kernel/build.sh).
+# Runs on a native arm64 hosted runner -- see tools/kernel/README.md for why
+# this replaced building locally under colima (a memory-starved 2 vCPU/16GiB
+# VM: the `make Image` compile crashed dockerd itself, twice, mid-build).
+#
+# workflow_dispatch lets us pull a fresh Image on demand; the path filter
+# only runs automatically when the kernel pipeline itself changes.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "tools/kernel/**"
+  pull_request:
+    paths:
+      - "tools/kernel/**"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # GitHub-hosted arm64 runner: native build, no cross toolchain, and no
+    # shared-VM memory pressure like colima's. Requires the repo to have
+    # access to arm64 hosted runners (public repos: free; private repos on
+    # Team/Enterprise: available as a paid runner type). If arm64 runners
+    # are not available, fall back to an x86_64 runner cross-compiling with
+    # `apt-get install gcc-aarch64-linux-gnu` and
+    # `CROSS_COMPILE=aarch64-linux-gnu- ARCH=arm64` -- see the "CI" section
+    # of tools/kernel/README.md for the exact substitution.
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Cache kernel source + ccache
+        uses: actions/cache@v4
+        with:
+          path: |
+            tools/kernel/work/src
+            tools/kernel/work/ccache
+          key: kernel-${{ hashFiles('tools/kernel/rask.config', 'tools/kernel/build.sh') }}
+          restore-keys: |
+            kernel-
+
+      - name: Build guest kernel Image
+        run: tools/kernel/build.sh
+
+      - name: Verify uncompressed ARM64 Image magic
+        run: |
+          magic=$(dd if=tools/kernel/work/Image bs=1 skip=56 count=4 2>/dev/null)
+          if [ "$magic" != "ARMd" ]; then
+            echo "expected 'ARMd' magic at offset 0x38, got: $magic" >&2
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rask-guest-kernel-Image
+          path: |
+            tools/kernel/work/Image
+            tools/kernel/work/config-used
+          if-no-files-found: error
