@@ -8,3 +8,10 @@ research-*.md
 /spikes/**/work/
 go.work
 go.work.sum
+/spikes/s1/spike-s1
+/spikes/s1/seed/
+/tools/kernel/work/
+/rask.linux-*
+/rask.e2e.linux-*
+/rask.bench.linux-*
+/test/benchmark/.raw-durations-*.txt

@@ -21,6 +21,14 @@ const (
 	// Service, i.e. the first address in ServiceCIDR.
 	APIServerServiceIP = "10.96.0.1"
 
+	// DNSServiceIP is the fixed ClusterIP assigned to CoreDNS's Service
+	// (kube-dns), the conventional tenth address in ServiceCIDR. kubelet
+	// needs this address before CoreDNS itself necessarily exists yet
+	// (it populates every pod's /etc/resolv.conf), so it is a cluster
+	// identity constant like the others here rather than something
+	// internal/manifests decides on its own.
+	DNSServiceIP = "10.96.0.10"
+
 	// PodCIDR is the cluster IP range for Pods.
 	PodCIDR = "10.244.0.0/16"
 

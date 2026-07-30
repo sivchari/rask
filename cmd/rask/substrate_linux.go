@@ -8,7 +8,7 @@ import (
 )
 
 // newPlatformRuntime returns the substrate.Runtime for Linux: supervised
-// host processes in a dedicated network namespace.
-func newPlatformRuntime() substrate.Runtime {
-	return hostproc.New()
+// host processes, storing cluster state under homeDir.
+func newPlatformRuntime(homeDir string) substrate.Runtime {
+	return hostproc.New(homeDir)
 }

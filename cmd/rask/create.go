@@ -4,12 +4,27 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/sivchari/rask/internal/cluster"
 	"github.com/sivchari/rask/internal/substrate"
 )
+
+// waitNode and waitCoreDNS are the allowed --wait values.
+const (
+	waitNode    = "node"
+	waitCoreDNS = "coredns"
+)
+
+// coreDNSWaitTimeout bounds --wait=coredns so a broken cluster fails fast
+// instead of hanging "rask create" forever.
+const coreDNSWaitTimeout = 60 * time.Second
 
 func newCreateCommand(rt substrate.Runtime, homeDir string) *cobra.Command {
 	cmd := &cobra.Command{
@@ -23,17 +38,23 @@ func newCreateCommand(rt substrate.Runtime, homeDir string) *cobra.Command {
 }
 
 func newCreateClusterCommand(rt substrate.Runtime, homeDir string) *cobra.Command {
-	var name string
+	var (
+		name    string
+		wait    string
+		verbose bool
+	)
 
 	cmd := &cobra.Command{
 		Use:   "cluster",
 		Short: "Create a new cluster",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return createCluster(cmd.Context(), rt, homeDir, name)
+			return createCluster(cmd, rt, homeDir, name, wait, verbose)
 		},
 	}
 
 	cmd.Flags().StringVar(&name, "name", defaultClusterName, "cluster name")
+	cmd.Flags().StringVar(&wait, "wait", waitNode, `what to wait for before returning: "node" or "coredns"`)
+	cmd.Flags().BoolVar(&verbose, "verbose", false, "print a phase-by-phase boot latency breakdown")
 
 	return cmd
 }
@@ -42,7 +63,13 @@ func newCreateClusterCommand(rt substrate.Runtime, homeDir string) *cobra.Comman
 // that has fully succeeded, its local state directory. This keeps a failed
 // create (expected while the substrate is a stub) from leaving behind state
 // that would make a retry think the cluster already exists.
-func createCluster(ctx context.Context, rt substrate.Runtime, homeDir, name string) error {
+func createCluster(cmd *cobra.Command, rt substrate.Runtime, homeDir, name, wait string, verbose bool) error {
+	if wait != waitNode && wait != waitCoreDNS {
+		return fmt.Errorf(`invalid --wait %q: must be %q or %q`, wait, waitNode, waitCoreDNS)
+	}
+
+	ctx := cmd.Context()
+
 	exists, err := cluster.Exists(homeDir, name)
 	if err != nil {
 		return err
@@ -56,6 +83,9 @@ func createCluster(ctx context.Context, rt substrate.Runtime, homeDir, name stri
 		return fmt.Errorf("cluster %q: %w", name, err)
 	}
 
+	// Start blocks until the node is Ready internally (see
+	// internal/bootstrap.Boot), which is what satisfies the "node"
+	// (default) --wait value; nothing further is needed for it here.
 	if err := rt.Start(ctx, name); err != nil {
 		return fmt.Errorf("cluster %q: %w", name, err)
 	}
@@ -64,5 +94,63 @@ func createCluster(ctx context.Context, rt substrate.Runtime, homeDir, name stri
 		return fmt.Errorf("creating state directory for cluster %q: %w", name, err)
 	}
 
+	if wait == waitCoreDNS {
+		if err := waitForCoreDNS(ctx, homeDir, name); err != nil {
+			return fmt.Errorf("cluster %q: waiting for CoreDNS: %w", name, err)
+		}
+	}
+
+	if verbose {
+		printTimeline(cmd, homeDir, name)
+	}
+
 	return nil
+}
+
+// waitForCoreDNS polls the CoreDNS Deployment (applied by
+// internal/manifests during Start) until it reports at least one Ready
+// replica.
+func waitForCoreDNS(ctx context.Context, homeDir, name string) error {
+	kubeconfigPath := filepath.Join(cluster.Dir(homeDir, name), "kubeconfig")
+
+	restConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		return fmt.Errorf("loading kubeconfig: %w", err)
+	}
+
+	clientset, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return fmt.Errorf("building clientset: %w", err)
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, coreDNSWaitTimeout)
+	defer cancel()
+
+	for {
+		dep, err := clientset.AppsV1().Deployments("kube-system").Get(waitCtx, "coredns", metav1.GetOptions{})
+		if err == nil && dep.Status.ReadyReplicas > 0 {
+			return nil
+		}
+
+		select {
+		case <-waitCtx.Done():
+			return fmt.Errorf("timed out waiting for the coredns Deployment to become Ready: %w", waitCtx.Err())
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+}
+
+// printTimeline prints the phase-by-phase boot latency breakdown a
+// substrate implementation may have written (see
+// internal/substrate/hostproc's timelinePath). Best-effort: silently does
+// nothing if absent, since not every substrate necessarily produces one.
+func printTimeline(cmd *cobra.Command, homeDir, name string) {
+	path := filepath.Join(cluster.Dir(homeDir, name), "data", "timeline.txt")
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), string(data))
 }

@@ -15,8 +15,16 @@ type fakeRuntime struct {
 	stopErr   error
 	deleteErr error
 
+	// onStart, if set, runs during Start after recording the call and
+	// before startErr is returned — for tests simulating a real
+	// substrate's Start-time side effects (e.g. hostproc writing a
+	// timeline file), which must happen before "rask create" moves on
+	// to its own post-Start steps.
+	onStart func(name string) error
+
 	createCalls []string
 	startCalls  []string
+	stopCalls   []string
 	deleteCalls []string
 }
 
@@ -29,10 +37,18 @@ func (f *fakeRuntime) Create(_ context.Context, name string) error {
 func (f *fakeRuntime) Start(_ context.Context, name string) error {
 	f.startCalls = append(f.startCalls, name)
 
+	if f.onStart != nil {
+		if err := f.onStart(name); err != nil {
+			return err
+		}
+	}
+
 	return f.startErr
 }
 
-func (f *fakeRuntime) Stop(_ context.Context, _ string) error {
+func (f *fakeRuntime) Stop(_ context.Context, name string) error {
+	f.stopCalls = append(f.stopCalls, name)
+
 	return f.stopErr
 }
 

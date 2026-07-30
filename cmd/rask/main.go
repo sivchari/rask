@@ -14,7 +14,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := newRootCommand(newPlatformRuntime(), homeDir).Execute(); err != nil {
+	if err := newRootCommand(newPlatformRuntime(homeDir), homeDir).Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

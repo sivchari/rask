@@ -30,13 +30,15 @@ func newGetClustersCommand(homeDir string) *cobra.Command {
 			}
 
 			if len(names) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "No clusters found")
+				_, err := fmt.Fprintln(cmd.OutOrStdout(), "No clusters found")
 
-				return nil
+				return err
 			}
 
 			for _, name := range names {
-				fmt.Fprintln(cmd.OutOrStdout(), name)
+				if _, err := fmt.Fprintln(cmd.OutOrStdout(), name); err != nil {
+					return err
+				}
 			}
 
 			return nil

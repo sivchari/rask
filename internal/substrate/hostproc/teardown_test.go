@@ -1,0 +1,154 @@
+//go:build linux
+
+package hostproc
+
+import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"syscall"
+	"testing"
+	"time"
+)
+
+func TestRuntime_StopWithNoStateFileIsANoOp(t *testing.T) {
+	t.Parallel()
+
+	r := New(t.TempDir())
+
+	if err := os.MkdirAll(r.dataDir("dev"), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	if err := r.Stop(context.Background(), "dev"); err != nil {
+		t.Errorf("Stop() with no state file = %v, want nil", err)
+	}
+}
+
+func TestRuntime_StopKillsPersistedPIDsAndRemovesRunningMarker(t *testing.T) {
+	t.Parallel()
+
+	r := New(t.TempDir())
+	name := "dev"
+
+	if err := os.MkdirAll(r.dataDir(name), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	cmd := exec.Command("/bin/sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("starting sleeper: %v", err)
+	}
+
+	pid := cmd.Process.Pid
+
+	// In production, Stop's target processes are reparented to init (PID
+	// 1) by the time it runs — the "rask create" process that spawned
+	// them has long since exited — so init reaps them the instant they
+	// die and kill(pid, 0) correctly reports ESRCH. In this test, this
+	// test binary is still their direct parent, so without an active
+	// Wait a killed child lingers as a zombie: still a valid PID that
+	// kill(pid, 0) reports as "alive" even though it's dead. Reap
+	// asynchronously, like init would, so the liveness check below is
+	// meaningful.
+	waited := make(chan struct{})
+
+	go func() {
+		_ = cmd.Wait()
+		close(waited)
+	}()
+
+	state := runtimeState{DatastorePID: pid, ProcessPIDs: map[string]int{}}
+	if err := writeState(r.statePath(name), state); err != nil {
+		t.Fatalf("writeState: %v", err)
+	}
+
+	if err := os.WriteFile(r.runningMarkerPath(name), nil, 0o644); err != nil {
+		t.Fatalf("writing running marker: %v", err)
+	}
+
+	if err := r.Stop(context.Background(), name); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	select {
+	case <-waited:
+	case <-time.After(time.Second):
+		t.Fatal("process was not reaped within 1s of Stop returning")
+	}
+
+	if err := syscall.Kill(pid, syscall.Signal(0)); err == nil {
+		t.Errorf("pid %d is still alive after Stop", pid)
+	}
+
+	if _, err := os.Stat(r.runningMarkerPath(name)); !os.IsNotExist(err) {
+		t.Errorf("running marker still present after Stop: err=%v", err)
+	}
+}
+
+func TestRuntime_DeleteWhileRunningErrors(t *testing.T) {
+	t.Parallel()
+
+	r := New(t.TempDir())
+	name := "dev"
+
+	if err := os.MkdirAll(r.dataDir(name), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	if err := os.WriteFile(r.runningMarkerPath(name), nil, 0o644); err != nil {
+		t.Fatalf("writing running marker: %v", err)
+	}
+
+	if err := r.Delete(context.Background(), name); err == nil {
+		t.Fatal("Delete() while running = nil error, want error")
+	}
+
+	if _, err := os.Stat(r.dataDir(name)); err != nil {
+		t.Errorf("data dir was removed despite Delete failing: %v", err)
+	}
+}
+
+func TestRuntime_DeleteAfterStopRemovesDataDir(t *testing.T) {
+	t.Parallel()
+
+	r := New(t.TempDir())
+	name := "dev"
+
+	if err := os.MkdirAll(r.dataDir(name), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	if err := r.Delete(context.Background(), name); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	if _, err := os.Stat(r.dataDir(name)); !os.IsNotExist(err) {
+		t.Errorf("data dir still present after Delete: err=%v", err)
+	}
+}
+
+func TestUnmountUnder_NoMountsIsANoOp(t *testing.T) {
+	t.Parallel()
+
+	// Just verifying it doesn't panic or hang on an ordinary directory
+	// with nothing mounted under it.
+	unmountUnder(filepath.Join(t.TempDir(), "nothing-mounted-here"))
+}
+
+func TestKillAll_SkipsAlreadyDeadPIDs(t *testing.T) {
+	t.Parallel()
+
+	cmd := exec.Command("/bin/sh", "-c", "exit 0")
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("running short-lived process: %v", err)
+	}
+
+	// The PID is now free to be reused by the OS, or simply refers to a
+	// reaped process; killAll must not panic either way. Give the kernel
+	// a moment to finish reaping.
+	time.Sleep(10 * time.Millisecond)
+
+	killAll([]int{cmd.Process.Pid}, syscall.SIGTERM)
+}
