@@ -25,6 +25,21 @@ type StartOptions struct {
 	SeedPath string
 }
 
+// ImageSource is a single container image, as an OCI/docker archive tar
+// stream (e.g. the output of "docker save"), to import into a cluster's
+// image store via Runtime.LoadImages.
+type ImageSource struct {
+	// Reference identifies the image for progress/error reporting only;
+	// LoadImages does not use it to select what gets imported — the
+	// archive in Stream already carries its own name(s)/tag(s).
+	Reference string
+
+	// Stream is the archive's content. LoadImages reads it to exhaustion
+	// exactly once and does not close it; the caller retains ownership of
+	// its lifetime.
+	Stream io.Reader
+}
+
 // Runtime creates, controls and tears down one rask cluster instance on the
 // host. Every method after Create takes the cluster name Create was called
 // with.
@@ -60,4 +75,13 @@ type Runtime interface {
 	// the cluster instance until ctx is canceled or the returned error
 	// channel is read from.
 	PortForward(ctx context.Context, name string, localAddr, remoteAddr string) (<-chan error, error)
+
+	// LoadImages imports each of images into the cluster instance's image
+	// store, so a pod can reference them with imagePullPolicy: Never
+	// without the cluster ever needing registry access. Each ImageSource
+	// is read exactly once — implementations must not re-read or re-send
+	// an image's archive more than once (kind's "load docker-image"
+	// resends its whole multi-image tarball once per requested image;
+	// see kind#3063).
+	LoadImages(ctx context.Context, name string, images []ImageSource) error
 }

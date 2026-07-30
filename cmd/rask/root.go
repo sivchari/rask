@@ -36,6 +36,7 @@ func newRootCommand(rt substrate.Runtime, homeDir string) *cobra.Command {
 		newGetCommand(homeDir),
 		newExportCommand(homeDir),
 		newAddonCommand(homeDir),
+		newLoadCommand(rt, homeDir),
 	)
 
 	if vmHost := newVMHostCommand(); vmHost != nil {
