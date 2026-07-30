@@ -1,0 +1,11 @@
+# Minimal containerd config for the S3 guest: no CRI (we drive it directly
+# via ctr, not Kubernetes), no CNI (out of scope per the spike brief).
+version = 2
+root = "/var/lib/containerd"
+state = "/run/containerd"
+
+[grpc]
+  address = "/run/containerd/containerd.sock"
+
+[debug]
+  level = "info"
