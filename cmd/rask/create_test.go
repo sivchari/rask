@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/sivchari/rask/internal/cluster"
+	"github.com/sivchari/rask/internal/substrate"
 )
 
 func TestCreateCluster_AlreadyExistsRejectsWithoutCallingRuntime(t *testing.T) {
@@ -216,6 +217,55 @@ func TestCreateCluster_VerbosePrintsTimelineFileWhenPresent(t *testing.T) {
 
 	if !strings.Contains(out.String(), "PHASE example") {
 		t.Errorf("stdout = %q, want it to contain the timeline file's content", out.String())
+	}
+}
+
+func TestCreateCluster_APIAudienceFlagPassedThroughToStart(t *testing.T) {
+	t.Parallel()
+
+	homeDir := t.TempDir()
+	rt := &fakeRuntime{}
+
+	root := newRootCommand(rt, homeDir)
+	root.SetArgs([]string{"create", "cluster", "--name", "dev", "--api-audience", "haro", "--api-audience", "another-client"})
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute(): %v", err)
+	}
+
+	if len(rt.startOptsCalls) != 1 {
+		t.Fatalf("startOptsCalls = %v, want exactly 1 call", rt.startOptsCalls)
+	}
+
+	want := substrate.StartOptions{ExtraAPIAudiences: []string{"haro", "another-client"}}
+	if got := rt.startOptsCalls[0]; !equalStringSlices(got.ExtraAPIAudiences, want.ExtraAPIAudiences) {
+		t.Errorf("StartOptions.ExtraAPIAudiences = %v, want %v", got.ExtraAPIAudiences, want.ExtraAPIAudiences)
+	}
+}
+
+func TestCreateCluster_NoAPIAudienceFlagPassesEmptySlice(t *testing.T) {
+	t.Parallel()
+
+	homeDir := t.TempDir()
+	rt := &fakeRuntime{}
+
+	root := newRootCommand(rt, homeDir)
+	root.SetArgs([]string{"create", "cluster", "--name", "dev"})
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute(): %v", err)
+	}
+
+	if len(rt.startOptsCalls) != 1 {
+		t.Fatalf("startOptsCalls = %v, want exactly 1 call", rt.startOptsCalls)
+	}
+
+	if got := rt.startOptsCalls[0].ExtraAPIAudiences; len(got) != 0 {
+		t.Errorf("StartOptions.ExtraAPIAudiences = %v, want empty", got)
 	}
 }
 

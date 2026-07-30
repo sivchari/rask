@@ -14,6 +14,17 @@ import (
 	"testing"
 )
 
+func TestCache_Dir(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	c := NewCache(dir)
+
+	if got := c.Dir(); got != dir {
+		t.Errorf("Dir() = %q, want %q", got, dir)
+	}
+}
+
 func TestEnsureFile_DownloadsVerifiesAndCaches(t *testing.T) {
 	t.Parallel()
 

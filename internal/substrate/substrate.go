@@ -9,6 +9,16 @@ import (
 	"io"
 )
 
+// StartOptions carries per-create-invocation settings for Runtime.Start
+// that aren't part of a cluster's persisted identity.
+type StartOptions struct {
+	// ExtraAPIAudiences are additional kube-apiserver --api-audiences
+	// values beyond the cluster's own service-account issuer, e.g. for a
+	// TokenReview client (such as haro's projected ServiceAccount token)
+	// that requests a custom audience.
+	ExtraAPIAudiences []string
+}
+
 // Runtime creates, controls and tears down one rask cluster instance on the
 // host. Every method after Create takes the cluster name Create was called
 // with.
@@ -21,7 +31,7 @@ type Runtime interface {
 	Create(ctx context.Context, name string) error
 
 	// Start boots the cluster instance created by Create.
-	Start(ctx context.Context, name string) error
+	Start(ctx context.Context, name string, opts StartOptions) error
 
 	// Stop shuts the cluster instance down without deleting its state,
 	// so a later Start can resume it.

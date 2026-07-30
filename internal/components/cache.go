@@ -27,6 +27,14 @@ func NewCache(dir string) *Cache {
 	return &Cache{dir: dir, client: http.DefaultClient}
 }
 
+// Dir returns the root directory this Cache is scoped to, for callers that
+// need to place their own cache entries alongside the component-scoped
+// subdirectories Ensure/EnsureGuestKernel/etc. create (e.g.
+// internal/substrate/vz's built initramfs).
+func (c *Cache) Dir() string {
+	return c.dir
+}
+
 // ensureFile downloads url into c.dir/subdir/filename if it is not already
 // present, verifying it against the sha256 digest found in checksumURL
 // (matched by checksumFilename) before it is considered cached. It returns

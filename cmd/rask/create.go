@@ -16,6 +16,11 @@ import (
 	"github.com/sivchari/rask/internal/substrate"
 )
 
+// apiAudienceFlag is the --api-audience flag name, repeatable so callers
+// can request more than one extra TokenReview audience (e.g. haro's
+// projected ServiceAccount token uses "haro").
+const apiAudienceFlag = "api-audience"
+
 // waitNode and waitCoreDNS are the allowed --wait values.
 const (
 	waitNode    = "node"
@@ -39,22 +44,25 @@ func newCreateCommand(rt substrate.Runtime, homeDir string) *cobra.Command {
 
 func newCreateClusterCommand(rt substrate.Runtime, homeDir string) *cobra.Command {
 	var (
-		name    string
-		wait    string
-		verbose bool
+		name         string
+		wait         string
+		verbose      bool
+		apiAudiences []string
 	)
 
 	cmd := &cobra.Command{
 		Use:   "cluster",
 		Short: "Create a new cluster",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return createCluster(cmd, rt, homeDir, name, wait, verbose)
+			return createCluster(cmd, rt, homeDir, name, wait, verbose, apiAudiences)
 		},
 	}
 
 	cmd.Flags().StringVar(&name, "name", defaultClusterName, "cluster name")
 	cmd.Flags().StringVar(&wait, "wait", waitNode, `what to wait for before returning: "node" or "coredns"`)
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "print a phase-by-phase boot latency breakdown")
+	cmd.Flags().StringArrayVar(&apiAudiences, apiAudienceFlag, nil,
+		`extra apiserver --api-audiences value beyond the cluster's own service-account issuer (repeatable), for TokenReview clients that request a custom audience (e.g. --api-audience haro)`)
 
 	return cmd
 }
@@ -63,7 +71,7 @@ func newCreateClusterCommand(rt substrate.Runtime, homeDir string) *cobra.Comman
 // that has fully succeeded, its local state directory. This keeps a failed
 // create (expected while the substrate is a stub) from leaving behind state
 // that would make a retry think the cluster already exists.
-func createCluster(cmd *cobra.Command, rt substrate.Runtime, homeDir, name, wait string, verbose bool) error {
+func createCluster(cmd *cobra.Command, rt substrate.Runtime, homeDir, name, wait string, verbose bool, apiAudiences []string) error {
 	if wait != waitNode && wait != waitCoreDNS {
 		return fmt.Errorf(`invalid --wait %q: must be %q or %q`, wait, waitNode, waitCoreDNS)
 	}
@@ -86,7 +94,8 @@ func createCluster(cmd *cobra.Command, rt substrate.Runtime, homeDir, name, wait
 	// Start blocks until the node is Ready internally (see
 	// internal/bootstrap.Boot), which is what satisfies the "node"
 	// (default) --wait value; nothing further is needed for it here.
-	if err := rt.Start(ctx, name); err != nil {
+	opts := substrate.StartOptions{ExtraAPIAudiences: apiAudiences}
+	if err := rt.Start(ctx, name, opts); err != nil {
 		return fmt.Errorf("cluster %q: %w", name, err)
 	}
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/sivchari/rask/internal/cluster"
 )
@@ -39,6 +40,16 @@ const cniConflistTemplate = `{
   ]
 }
 `
+
+// apiAudiences returns kube-apiserver's --api-audiences value: issuer (the
+// cluster's own service-account issuer, always trusted) plus any
+// caller-requested extra audiences, comma-joined. Extra audiences let a
+// client request a projected ServiceAccount token for a custom audience
+// (e.g. haro's TokenReview-based phone-home uses "haro") that the API
+// server will still accept at authentication time.
+func apiAudiences(issuer string, extra []string) string {
+	return strings.Join(append([]string{issuer}, extra...), ",")
+}
 
 // writeCNIConfig writes a bridge+host-local+portmap conflist to confDir.
 func writeCNIConfig(confDir string) error {

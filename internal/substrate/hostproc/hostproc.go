@@ -118,7 +118,7 @@ func (r *Runtime) Create(ctx context.Context, name string) error {
 // processes with no persisted PID state to ever kill them, AND leave
 // cluster.Dir behind, which would make cluster.Exists report true forever
 // after and permanently block every retry.
-func (r *Runtime) Start(ctx context.Context, name string) (err error) {
+func (r *Runtime) Start(ctx context.Context, name string, opts substrate.StartOptions) (err error) {
 	arch, err := components.HostArch()
 	if err != nil {
 		return err
@@ -140,11 +140,12 @@ func (r *Runtime) Start(ctx context.Context, name string) (err error) {
 	datastore := kine.New(paths.Kine, filepath.Join(dataDir, "kine"))
 
 	result, err := bootstrap.Boot(ctx, bootstrap.Config{
-		ClusterName: name,
-		DataDir:     dataDir,
-		NodeIP:      nodeIP,
-		Paths:       paths,
-		Datastore:   datastore,
+		ClusterName:       name,
+		DataDir:           dataDir,
+		NodeIP:            nodeIP,
+		Paths:             paths,
+		Datastore:         datastore,
+		ExtraAPIAudiences: opts.ExtraAPIAudiences,
 	})
 	if err != nil {
 		return fmt.Errorf("hostproc: %w", err)

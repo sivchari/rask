@@ -1,10 +1,12 @@
 # Vendored from
 # https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.31/deploy/local-path-storage.yaml
-# with one change: the "local-path" StorageClass has
+# with two changes: the "local-path" StorageClass has
 # storageclass.kubernetes.io/is-default-class: "true" added, so it becomes
-# the cluster's default StorageClass (unset upstream). Applied as-is
-# (Namespace, RBAC, Deployment, StorageClass, ConfigMap) via apply.go's
-# generic multi-document applier.
+# the cluster's default StorageClass (unset upstream); and a second
+# "standard"-named StorageClass alias for the same provisioner was added
+# (see its own comment below). Applied as-is (Namespace, RBAC, Deployment,
+# StorageClass x2, ConfigMap) via apply.go's generic multi-document
+# applier.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -125,6 +127,22 @@ metadata:
   name: local-path
   annotations:
     storageclass.kubernetes.io/is-default-class: "true"
+provisioner: rancher.io/local-path
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete
+
+---
+# Second deviation from upstream (see header comment): a "standard"-named
+# alias StorageClass for the same rancher.io/local-path provisioner. Some
+# workloads (e.g. haro's hack/local/workspaceprofile.smoketest.yaml)
+# hardcode storageClassName: standard; this lets them bind against rask's
+# local-path-provisioner without editing their own manifests. Not marked
+# default: "local-path" above already is, and a PVC always names its
+# StorageClass explicitly here anyway.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: standard
 provisioner: rancher.io/local-path
 volumeBindingMode: WaitForFirstConsumer
 reclaimPolicy: Delete

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"io"
+
+	"github.com/sivchari/rask/internal/substrate"
 )
 
 // fakeRuntime is a substrate.Runtime test double that records calls and
@@ -22,10 +24,11 @@ type fakeRuntime struct {
 	// to its own post-Start steps.
 	onStart func(name string) error
 
-	createCalls []string
-	startCalls  []string
-	stopCalls   []string
-	deleteCalls []string
+	createCalls    []string
+	startCalls     []string
+	startOptsCalls []substrate.StartOptions
+	stopCalls      []string
+	deleteCalls    []string
 }
 
 func (f *fakeRuntime) Create(_ context.Context, name string) error {
@@ -34,8 +37,9 @@ func (f *fakeRuntime) Create(_ context.Context, name string) error {
 	return f.createErr
 }
 
-func (f *fakeRuntime) Start(_ context.Context, name string) error {
+func (f *fakeRuntime) Start(_ context.Context, name string, opts substrate.StartOptions) error {
 	f.startCalls = append(f.startCalls, name)
+	f.startOptsCalls = append(f.startOptsCalls, opts)
 
 	if f.onStart != nil {
 		if err := f.onStart(name); err != nil {

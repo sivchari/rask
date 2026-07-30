@@ -161,3 +161,43 @@ func TestWriteKubeProxyConfig_RendersRequiredFields(t *testing.T) {
 		}
 	}
 }
+
+func TestAPIAudiences(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		issuer string
+		extra  []string
+		want   string
+	}{
+		{
+			name:   "no extra audiences",
+			issuer: "https://kubernetes.default.svc.cluster.local",
+			extra:  nil,
+			want:   "https://kubernetes.default.svc.cluster.local",
+		},
+		{
+			name:   "one extra audience for a TokenReview client",
+			issuer: "https://kubernetes.default.svc.cluster.local",
+			extra:  []string{"haro"},
+			want:   "https://kubernetes.default.svc.cluster.local,haro",
+		},
+		{
+			name:   "multiple extra audiences preserve order",
+			issuer: "https://kubernetes.default.svc.cluster.local",
+			extra:  []string{"haro", "another-client"},
+			want:   "https://kubernetes.default.svc.cluster.local,haro,another-client",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := apiAudiences(tt.issuer, tt.extra); got != tt.want {
+				t.Errorf("apiAudiences(%q, %v) = %q, want %q", tt.issuer, tt.extra, got, tt.want)
+			}
+		})
+	}
+}

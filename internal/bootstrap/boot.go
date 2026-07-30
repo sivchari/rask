@@ -64,6 +64,12 @@ type Config struct {
 	// LogDir is where every launched component's combined stdout/stderr
 	// is captured. Defaults to DataDir/logs if empty.
 	LogDir string
+
+	// ExtraAPIAudiences are additional kube-apiserver --api-audiences
+	// values beyond the cluster's own service-account issuer, e.g. for a
+	// TokenReview client that requests a custom audience (see
+	// apiAudiences in config.go).
+	ExtraAPIAudiences []string
 }
 
 // Result is what Boot returns once the node is Ready.
@@ -262,12 +268,14 @@ func bootDatastoreAndControlPlane(launchCtx, waitCtx context.Context, cfg Config
 
 	tl.Mark("kine_up")
 
+	issuer := "https://kubernetes.default.svc." + cluster.Domain
+
 	apiserverArgs := []string{
 		"--etcd-servers=" + endpoint,
-		"--service-account-issuer=https://kubernetes.default.svc." + cluster.Domain,
+		"--service-account-issuer=" + issuer,
 		"--service-account-signing-key-file=" + cpki.ServiceAccountPrivPath,
 		"--service-account-key-file=" + cpki.ServiceAccountPubPath,
-		"--api-audiences=https://kubernetes.default.svc." + cluster.Domain,
+		"--api-audiences=" + apiAudiences(issuer, cfg.ExtraAPIAudiences),
 		"--authorization-mode=Node,RBAC",
 		"--service-cluster-ip-range=" + cluster.ServiceCIDR,
 		"--anonymous-auth=false",
