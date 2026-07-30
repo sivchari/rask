@@ -53,19 +53,35 @@ research-m0-spikes.md's "haro 要件" section for the task's origin.
       after the Start() signature change (no -race — same known gap as M1,
       no cross-arch C toolchain for CGO).
 
-## In progress / next
+## Done (cont.) — full E2E, all 4 technical exit criteria PASS
 
-- [ ] StorageClass "standard" compat alias in internal/manifests (haro's
-      smoketest profile hardcodes storageClassName: standard; rask's
-      default is named "local-path", same provisioner rancher.io/local-path).
-- [ ] cmd/rask addon.go: `rask addon install gateway-api|snapshot-crds`.
-- [ ] Build harooperator linux/arm64 from the READ-ONLY layerone checkout,
-      run out-of-cluster in colima against a rask cluster's kubeconfig.
-- [ ] Apply haro CRDs + smoketest WorkspaceProfile + Workspace sample;
-      verify pod Running, PVC Bound.
-- [ ] TokenReview verification (kubectl create token --audience=haro +
-      TokenReview object with spec.audiences: [haro]).
-- [ ] RESULTS-m2.md with wall-clock + friction notes.
+- [x] StorageClass "standard" compat alias added to
+      internal/manifests/local-path-storage.yaml (second StorageClass doc,
+      same rancher.io/local-path provisioner, not marked default).
+- [x] cmd/rask/addon.go: `rask addon install gateway-api|snapshot-crds`,
+      wired into root.go. Vendored Gateway API v1.5.1 standard-channel CRDs
+      and external-snapshotter v8.6.0 CRDs (versions matched to
+      harooperator's own go.mod).
+- [x] Built harooperator linux/arm64 from the READ-ONLY layerone checkout
+      (CGO_ENABLED=0), ran out-of-cluster in colima with --leader-elect=false
+      against a real rask cluster's admin kubeconfig.
+- [x] Applied haro CRDs + workspaceprofile.smoketest.yaml + workspace-sample.yaml.
+      PVC Bound (~15s), pod 3/3 Running (~30s total). Operator logs clean,
+      Workspace status Provisioned=True/Suspended=False.
+- [x] TokenReview verified: read the real workspace pod's projected token
+      (audience "haro") directly off the host filesystem (kubectl
+      exec/logs hit an unrelated pre-existing rask gap — see RESULTS-m2.md
+      §2 friction note), POSTed to /apis/authentication.k8s.io/v1/tokenreviews
+      with spec.audiences: [haro] -> status.authenticated: true, correct
+      identity (system:serviceaccount:haro-user-smoketest:ws-smoketest).
+- [x] Cleaned up: killed harooperator by exact PID, `rask delete cluster`,
+      removed temp /etc/hosts entry, moved scratch binaries out of the repo.
+      Verified other colima containers (fjord-lb, flagfield, haro-local,
+      postgres-haro, redis) had continuous uptime throughout — untouched.
+- [x] RESULTS-m2.md written with full wall-clock breakdown + friction notes
+      + follow-ups for M3.
+
+## Exit criteria verdict: 4/4 technical criteria PASS (details in RESULTS-m2.md)
 
 ## Safety notes carried over from M1 (see PROGRESS.md for full incident)
 
