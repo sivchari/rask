@@ -81,6 +81,14 @@ func (r *Runtime) timelinePath(name string) string {
 	return filepath.Join(r.dataDir(name), "timeline.txt")
 }
 
+// diskPath must match vmhost.go's RunVMHost, which is the only writer of
+// this file — kept as a literal "disk.img" join here (not a shared
+// constant) only because vmhost.go builds it from its own local dataDir
+// variable rather than calling a Runtime method.
+func (r *Runtime) diskPath(name string) string {
+	return filepath.Join(r.dataDir(name), "disk.img")
+}
+
 // Create prepares (but does not start) a cluster instance: ensures the
 // template initramfs and guest kernel are cached (the first call on a
 // fresh host pays this download/build cost; later calls are instant), and
@@ -110,11 +118,13 @@ func (r *Runtime) Create(ctx context.Context, name string, opts substrate.StartO
 	return nil
 }
 
-// Start spawns the cluster's VM as a detached "rask __vm-host" child
-// process (see package doc), waits for the guest to report healthy through
-// its control agent, then persists the PID, admin kubeconfig (rewritten to
-// point at the forwarded host port) and boot timeline for later
-// Stop/Delete/--verbose calls.
+// Start first fails fast (see the peekVMLock check below) if a VM is
+// already running elsewhere on this host — only one may run at a time
+// (lock.go) — then spawns the cluster's VM as a detached "rask __vm-host"
+// child process (see package doc), waits for the guest to report healthy
+// through its control agent, then persists the PID, admin kubeconfig
+// (rewritten to point at the forwarded host port) and boot timeline for
+// later Stop/Delete/--verbose calls.
 //
 // If anything after the child process starts subsequently fails, Start
 // gracefully terminates it (terminateVMHost — SIGTERM first, so
@@ -159,6 +169,21 @@ func (r *Runtime) Start(ctx context.Context, name string, opts substrate.StartOp
 
 	if opts.CoreDNSImage != "" {
 		return errors.New("vz: --coredns-image is not supported by the vz substrate yet")
+	}
+
+	// Fail fast, before creating any state or spawning a vm-host process
+	// at all, if a VM is already running elsewhere on this host: without
+	// this, a doomed Start only discovered the conflict once
+	// waitForVMState's process-liveness check or bootTimeout fired,
+	// minutes later, via a generic error that never named the actual
+	// holder — found live during this session (host-wide flock in
+	// vm-host.go's own RunVMHost still fails fast internally, but nothing
+	// short-circuited *this* process's wait for it to do so). See
+	// peekVMLock's doc comment for why this check is racy-but-fine.
+	if holder, busy, err := peekVMLock(r.homeDir); err != nil {
+		return fmt.Errorf("vz: checking host VM lock: %w", err)
+	} else if busy {
+		return lockConflictError(holder)
 	}
 
 	clusterDir := cluster.Dir(r.homeDir, name)
@@ -391,10 +416,18 @@ func (r *Runtime) Stop(ctx context.Context, name string) error {
 // Delete removes a cluster instance and all of its state. Errors if the
 // cluster is still running (its pidfile is present), matching
 // substrate.Runtime's documented contract.
+//
+// Before removing anything, it also does a best-effort, warn-only check
+// (warnLeakedXPCProcesses) for a Virtualization XPC process that still
+// has this cluster's disk image open despite vm-host no longer running —
+// see that function's doc comment for why this only ever warns and never
+// kills.
 func (r *Runtime) Delete(ctx context.Context, name string) error {
 	if _, ok := r.readPID(name); ok {
 		return fmt.Errorf("vz: cluster %q is still running (call Stop first)", name)
 	}
+
+	warnLeakedXPCProcesses(name, r.diskPath(name))
 
 	return os.RemoveAll(cluster.Dir(r.homeDir, name))
 }
