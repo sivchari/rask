@@ -169,3 +169,84 @@ shared, constrained VM. A clean re-run once the host is genuinely idle is the na
   `cmd/rask/seed_darwin.go`)
 - A genuinely clean-host cold-vs-seeded re-measurement (both runs in this session had a concurrent
   macOS vz VM competing for host CPU; see above)
+
+## Image-bundle: prefetching CoreDNS/local-path-provisioner/pause into `~/.rask/cache/images`
+
+`internal/imagebundle` (pure-Go image prefetch via `google/go-containerregistry`'s `crane`, no
+daemon) plus `internal/substrate/hostproc`'s `Create`/`Start` wiring — see
+`test/benchmark/PROGRESS-imagebundle.md` for the full design and code pointers. Summary: `Create`
+prefetches CoreDNS/local-path-provisioner/busybox (the helper-pod image)/`registry.k8s.io/pause`
+into `~/.rask/cache/images/<arch>/`, concurrently with the existing component-binary download, as
+docker-save tar archives (best-effort — a prefetch failure never fails `Create`, matching
+`--component-dir`'s existing "no hard network dependency" contract). `Start` then imports whatever
+is cached into the cluster's containerd concurrently with `bootstrap.Boot` (not serially after it),
+so the images are already present in containerd's `k8s.io` namespace before
+`ApplyCoreDNS`/`ApplyLocalPathProvisioner` even runs.
+
+Same host as this file's earlier M1/M3-prep sections (contended, shared with several unrelated
+long-running docker containers on this colima instance — see load average below; **not** a
+clean-room host, same caveat as the M3-prep section above). Both binaries were cross-compiled
+`GOOS=linux GOARCH=arm64` and run via `colima ssh -- sudo <bin> create/delete cluster --name bench`,
+matching `bench.sh`'s own methodology. "before" = this branch immediately prior to this change
+(verified via `git stash`); "after" = with the change. Each run's `delete` removes the cluster's own
+containerd root (so every run pays a fresh image *import*, "before" pays a fresh registry *pull*),
+but does **not** touch `~/.rask/cache` (component cache or, now, the image cache) — matching every
+prior measurement in this file.
+
+Host and guest load average immediately before this measurement: host (macOS, shared) 6.25 / 7.59 /
+7.48 (1/5/15m), colima guest (2 vCPU) 1.16 / 1.61 / 1.25.
+
+### `--wait=coredns` (n=5 each, warm image cache for "after")
+
+| scenario | p50 | mean | min | max | n |
+|---|---|---|---|---|---|
+| before (registry pull every run) | 15.278s | 14.879s | 12.611s | 15.946s | 5 |
+| after (cached images imported from local disk) | 10.558s | 10.592s | 7.606s | 12.690s | 5 |
+
+p50 improved **30.9%** (15.278s → 10.558s), mean **28.8%**. Not a full elimination of the gap to
+`--wait=node`'s ~2.4s: the remaining ~8s is CoreDNS's own container start + readiness-probe latency
+and `waitForCoreDNS`'s poll interval, not image pull — see the phase table below. Both series were
+measured on the same contended host as each other (back-to-back, same session), so the comparison
+is fair even though neither is a clean-room number in isolation.
+
+### `--wait=coredns`, cold image cache (first-ever create, n=1)
+
+Same "after" binary, but `~/.rask/cache/images` wiped first (component-binary cache left warm — this
+isolates the image cache specifically, not "a cold `~/.rask` in general"): **14.853s**. Close to
+"before"'s own p50 (15.278s) — expected, since a cold image cache means `Create`'s prefetch pays the
+same network cost the old code always paid, just moved earlier (into `Create`, concurrently with the
+component-binary download) instead of happening implicitly during `Start`'s manifest-driven pull. The
+speedup only shows up from the *second* create onward, once the image cache is warm.
+
+### `--wait=node` (n=5 each) — confirms no regression
+
+| scenario | p50 | mean | min | max | n |
+|---|---|---|---|---|---|
+| before | 2.364s | 2.525s | 2.303s | 3.142s | 5 |
+| after | 2.518s | 2.489s | 2.368s | 2.566s | 5 |
+
+Within run-to-run noise (both series' own min/max spread is larger than the 0.15s p50 delta between
+them) — confirms the concurrent image-import goroutine does not add to the node-Ready critical path,
+as intended (Start does not wait extra for it beyond what `bootstrap.Boot` itself already takes).
+
+### Where the remaining `--wait=coredns` time goes (representative `--verbose` run, "after", warm cache)
+
+| phase (cumulative since Boot's internal t0) | value |
+|---|---|
+| kine_up | 25ms |
+| containerd_up | 45ms |
+| apiserver_readyz | 1.672s |
+| node_registered | 1.682s |
+| **node_ready** | **1.682s** |
+| kube_proxy_started | 1.778s |
+| kubelet_started | 1.953s |
+| cm_sched_started | 2.000s |
+
+This is `bootstrap.Boot`'s own internal timeline (guest/process-internal, not wall-clock from the
+host CLI) — it ends at node Ready, ~2s here. It does not cover `--wait=coredns`'s own remaining
+budget (`ApplyCoreDNS`'s API round trip, CoreDNS's pod being scheduled, its container starting, and
+`waitForCoreDNS`'s readiness poll), which is not currently broken out into its own timeline phase —
+a reasonable follow-up if a more precise breakdown is wanted. The measured total ("after" p50
+10.558s) minus this ~2s internal boot minus the host-side CLI/SSH-round-trip overhead documented
+earlier in this file leaves several seconds in that CoreDNS-specific tail, consistent with container
+start + readiness-probe latency rather than a registry pull (the whole point of this change).

@@ -19,6 +19,13 @@ const (
 	// DefaultK8sVersion is used when a cluster does not request a
 	// specific Kubernetes version.
 	DefaultK8sVersion = "v1.33.13"
+
+	// PauseImage is the CRI pause/sandbox image containerd uses for every
+	// pod sandbox, pinned to match the kubelet version rask ships.
+	// internal/bootstrap's containerd config template pins it as every
+	// cluster's sandbox image; internal/imagebundle prefetches it so
+	// containerd never needs registry access to create a pod sandbox.
+	PauseImage = "registry.k8s.io/pause:3.10"
 )
 
 // Arch is a Kubernetes/Go-style architecture identifier, restricted to the

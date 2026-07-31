@@ -6,8 +6,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"time"
 
 	containerd "github.com/containerd/containerd/v2/client"
 	"github.com/containerd/platforms"
@@ -25,9 +27,21 @@ import (
 // with "content digest ...: not found" the moment it reaches a
 // declared-but-not-included foreign-platform manifest; every archive
 // LoadImages ever receives (both docker-image's live "docker save" and
-// image-archive's on-disk tar) was produced on this same host, so the only
-// platform that can ever actually be present is the host's own.
+// image-archive's on-disk tar, plus internal/imagebundle's own crane.Save
+// output) was produced on this same host/arch, so the only platform that
+// can ever actually be present is the host's own.
 var importPlatform = platforms.DefaultStrict()
+
+// containerdImportTimeout bounds importCachedImages's wait for the
+// cluster's containerd socket to accept connections. Matches
+// internal/bootstrap's own containerdReadyTimeout: if containerd never
+// comes up at all, the concurrently-running bootstrap.Boot call already
+// fails within that same bound, so this adds no serial wait of its own.
+const containerdImportTimeout = 30 * time.Second
+
+// socketPollInterval governs waitContainerdSocket's readiness poll,
+// matching internal/bootstrap's own poll cadence (see its pollInterval).
+const socketPollInterval = 20 * time.Millisecond
 
 // containerdSocketPath is the socket internal/bootstrap/config.go's
 // writeContainerdConfig configures the cluster's own containerd instance to
@@ -69,6 +83,14 @@ func (r *Runtime) LoadImages(ctx context.Context, name string, images []substrat
 	}
 	defer func() { _ = client.Close() }()
 
+	return importImages(ctx, client, images)
+}
+
+// importImages is LoadImages's and importCachedImages's shared core: it
+// imports each of images into client's image store, one at a time (see
+// LoadImages's doc comment for why one-at-a-time, not a single combined
+// tarball).
+func importImages(ctx context.Context, client *containerd.Client, images []substrate.ImageSource) error {
 	for _, img := range images {
 		if _, err := client.Import(ctx, img.Stream, containerd.WithImportPlatform(importPlatform)); err != nil {
 			return fmt.Errorf("hostproc: importing %s: %w", img.Reference, err)
@@ -76,4 +98,36 @@ func (r *Runtime) LoadImages(ctx context.Context, name string, images []substrat
 	}
 
 	return nil
+}
+
+// waitContainerdSocket polls until socketPath accepts a connection and
+// returns a connected containerd client in the "k8s.io" namespace, or ctx
+// is done. Used by importCachedImages, which — unlike LoadImages, which
+// only ever runs against an already-running cluster — is started
+// concurrently with the same Start call that is still bringing containerd
+// up (see hostproc.go's Start), so it cannot assume the socket already
+// exists.
+func waitContainerdSocket(ctx context.Context, socketPath string) (*containerd.Client, error) {
+	var lastErr error
+
+	for {
+		if conn, dialErr := net.Dial("unix", socketPath); dialErr == nil {
+			_ = conn.Close()
+
+			client, err := containerd.New(socketPath, containerd.WithDefaultNamespace("k8s.io"))
+			if err == nil {
+				return client, nil
+			}
+
+			lastErr = err
+		} else {
+			lastErr = dialErr
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("waiting for containerd socket %s: %w (last error: %v)", socketPath, ctx.Err(), lastErr)
+		case <-time.After(socketPollInterval):
+		}
+	}
 }

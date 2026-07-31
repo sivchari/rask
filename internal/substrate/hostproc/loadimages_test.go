@@ -4,10 +4,13 @@ package hostproc
 
 import (
 	"context"
+	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sivchari/rask/internal/substrate"
 )
@@ -59,4 +62,58 @@ func TestRuntime_LoadImagesOnUnknownClusterErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("LoadImages() on an unknown cluster = nil error, want error")
 	}
+}
+
+func TestWaitContainerdSocket_NoListenerTimesOutWithContextError(t *testing.T) {
+	t.Parallel()
+
+	socketPath := filepath.Join(t.TempDir(), "containerd.sock")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	_, err := waitContainerdSocket(ctx, socketPath)
+	if err == nil {
+		t.Fatal("waitContainerdSocket() against a socket nothing ever listens on = nil error, want error")
+	}
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("waitContainerdSocket() error = %v, want it to wrap context.DeadlineExceeded", err)
+	}
+}
+
+func TestWaitContainerdSocket_ReturnsOnceListening(t *testing.T) {
+	t.Parallel()
+
+	socketPath := filepath.Join(t.TempDir(), "containerd.sock")
+
+	// A plain unix listener is enough to satisfy the net.Dial half of
+	// waitContainerdSocket's readiness check; it is not a real containerd
+	// server, so this only exercises the polling behavior, not the
+	// subsequent containerd.New handshake.
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("net.Listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	go func() {
+		for {
+			conn, acceptErr := ln.Accept()
+			if acceptErr != nil {
+				return
+			}
+
+			_ = conn.Close()
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	client, err := waitContainerdSocket(ctx, socketPath)
+	if err != nil {
+		t.Fatalf("waitContainerdSocket(): %v", err)
+	}
+	defer func() { _ = client.Close() }()
 }

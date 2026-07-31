@@ -7,11 +7,8 @@ import (
 	"strings"
 
 	"github.com/sivchari/rask/internal/cluster"
+	"github.com/sivchari/rask/internal/components"
 )
-
-// sandboxImage is the CRI pause image containerd uses for every pod
-// sandbox, pinned to match the kubelet version rask ships.
-const sandboxImage = "registry.k8s.io/pause:3.10"
 
 // cniConflistTemplate is the standard bridge/host-local/portmap CNI network
 // containerd's CRI plugin expects. loopback is not referenced here:
@@ -188,7 +185,7 @@ func writeContainerdConfig(dataDir, runcPath, cniBinDir, cniConfDir string) (*co
 	}
 
 	content := fmt.Sprintf(containerdConfigTemplate,
-		paths.root, paths.state, sandboxImage, runcPath, cniBinDir, cniConfDir, paths.socketPath,
+		paths.root, paths.state, components.PauseImage, runcPath, cniBinDir, cniConfDir, paths.socketPath,
 	)
 
 	if err := os.WriteFile(paths.configPath, []byte(content), 0o644); err != nil {

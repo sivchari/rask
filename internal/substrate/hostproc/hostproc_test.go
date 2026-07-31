@@ -3,11 +3,15 @@
 package hostproc
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
+
+	"github.com/sivchari/rask/internal/components"
 )
 
 func TestRuntime_DataDirAndKubeconfigPathAreScopedToHomeDirAndName(t *testing.T) {
@@ -109,6 +113,57 @@ func TestCopyFile_CopiesContentAndCreatesParentDirs(t *testing.T) {
 
 	if string(got) != "hello" {
 		t.Errorf("dst content = %q, want %q", got, "hello")
+	}
+}
+
+func TestRuntime_ImageCacheDirIsScopedUnderCacheDirAndDistinctFromComponentCache(t *testing.T) {
+	t.Parallel()
+
+	homeDir := t.TempDir()
+	r := New(homeDir)
+
+	want := filepath.Join(homeDir, "cache", "images")
+	if got := r.imageCacheDir(); got != want {
+		t.Errorf("imageCacheDir() = %q, want %q", got, want)
+	}
+
+	if r.imageCacheDir() == r.cacheDir() {
+		t.Error("imageCacheDir() == cacheDir(), want image cache scoped to its own subdirectory")
+	}
+}
+
+// TestRuntime_ImportCachedImages_NoCacheEntriesReturnsWithoutDialingContainerd
+// exercises importCachedImages' fast path: with nothing ever prefetched
+// (see Create), it must return promptly without ever attempting to reach
+// containerd at all — the whole point of this being best-effort is that a
+// cluster with a cold/missing image cache still starts exactly as it did
+// before this existed, with no extra wait.
+func TestRuntime_ImportCachedImages_NoCacheEntriesReturnsWithoutDialingContainerd(t *testing.T) {
+	t.Parallel()
+
+	r := New(t.TempDir())
+
+	// A canceled context: if importCachedImages tried to actually wait
+	// for a containerd socket, waitContainerdSocket would immediately
+	// return this cancellation as an error path (logged, not returned —
+	// see importCachedImages' doc comment), but the point of this test is
+	// that it never even gets that far, so it must return well within the
+	// deadline regardless.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		r.importCachedImages(ctx, "dev", components.ARM64, "example.com/coredns:v1")
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("importCachedImages with an empty cache did not return promptly")
 	}
 }
 

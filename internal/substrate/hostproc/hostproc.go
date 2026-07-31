@@ -33,6 +33,7 @@ import (
 	"github.com/sivchari/rask/internal/bootstrap"
 	"github.com/sivchari/rask/internal/cluster"
 	"github.com/sivchari/rask/internal/components"
+	"github.com/sivchari/rask/internal/imagebundle"
 	"github.com/sivchari/rask/internal/manifests"
 	"github.com/sivchari/rask/internal/store/kine"
 	"github.com/sivchari/rask/internal/substrate"
@@ -119,12 +120,43 @@ func (r *Runtime) Create(ctx context.Context, name string, opts substrate.StartO
 		return err
 	}
 
+	// Prefetches every image Start's importCachedImages will later look
+	// for, concurrently with the component-binary download below, so a
+	// cold cache doesn't add serial time on top of it. This is pure
+	// best-effort: a failure here (no network, an unreachable registry, an
+	// --coredns-image override that doesn't exist) must never fail
+	// Create — it would otherwise regress --component-dir's whole point
+	// (avoiding a hard network dependency) into requiring one anyway.
+	// importCachedImages finding nothing cached simply falls back to the
+	// pre-existing behavior: kubelet pulls the image itself once the
+	// corresponding pod is scheduled (imagePullPolicy: IfNotPresent).
+	imagesDone := make(chan struct{})
+
+	go func() {
+		defer close(imagesDone)
+
+		refs := requiredImages(coreDNSImage(opts))
+		if _, err := imagebundle.NewCache(r.imageCacheDir()).EnsureAll(ctx, refs, arch); err != nil {
+			fmt.Fprintf(os.Stderr, "hostproc: prefetching cluster images (falling back to a live pull on demand): %v\n", err)
+		}
+	}()
+
 	src := r.componentSource(opts)
-	if _, err := src.Resolve(ctx, components.DefaultK8sVersion, arch); err != nil {
-		return fmt.Errorf("hostproc: preparing component binaries: %w", err)
+	_, resolveErr := src.Resolve(ctx, components.DefaultK8sVersion, arch)
+
+	<-imagesDone
+
+	if resolveErr != nil {
+		return fmt.Errorf("hostproc: preparing component binaries: %w", resolveErr)
 	}
 
 	return nil
+}
+
+// imageCacheDir is where internal/imagebundle caches prefetched cluster
+// images, alongside (but separate from) cacheDir's component-binary cache.
+func (r *Runtime) imageCacheDir() string {
+	return filepath.Join(r.cacheDir(), "images")
 }
 
 // componentSource returns opts.ComponentDir's components.ComponentSource
@@ -181,6 +213,28 @@ func (r *Runtime) Start(ctx context.Context, name string, opts substrate.StartOp
 
 	datastore := kine.New(paths.Kine, filepath.Join(dataDir, "kine"))
 
+	// Imports whatever internal/imagebundle already cached for this
+	// cluster's manifest bundle (see Create) into the cluster's own
+	// containerd, concurrently with bootstrap.Boot below, so that by the
+	// time CoreDNS/local-path-provisioner's pods are scheduled their
+	// images are already present and containerd/kubelet never need
+	// registry access (imagePullPolicy: IfNotPresent — see
+	// internal/manifests).
+	//
+	// Deliberately its own goroutine, not folded into an errgroup shared
+	// with the bootstrap.Boot call below: Boot must receive ctx exactly
+	// as this function received it, never an errgroup-derived context —
+	// see runBootDAG's doc comment (internal/bootstrap/boot.go) for why
+	// that specific mistake SIGKILLs the entire control plane the instant
+	// boot succeeds.
+	imagesDone := make(chan struct{})
+
+	go func() {
+		defer close(imagesDone)
+
+		r.importCachedImages(ctx, name, arch, coreDNSImage(opts))
+	}()
+
 	result, err := bootstrap.Boot(ctx, bootstrap.Config{
 		ClusterName:        name,
 		DataDir:            dataDir,
@@ -191,6 +245,13 @@ func (r *Runtime) Start(ctx context.Context, name string, opts substrate.StartOp
 		SeedPath:           opts.SeedPath,
 		ExtraAPIServerArgs: opts.ExtraAPIServerArgs,
 	})
+
+	// Waited for here, before any cleanup below (both the immediate
+	// return on a Boot failure and the deferred cluster.Dir removal a few
+	// lines down) can run concurrently with importCachedImages still
+	// reading cache files or writing into dataDir/containerd.
+	<-imagesDone
+
 	if err != nil {
 		return fmt.Errorf("hostproc: %w", err)
 	}
@@ -253,6 +314,78 @@ func coreDNSImage(opts substrate.StartOptions) string {
 	}
 
 	return manifests.CoreDNSImage
+}
+
+// requiredImages is every image internal/imagebundle should prefetch (see
+// Create) and importCachedImages should look for in the cache (see Start):
+// manifests.RequiredImages(coreDNSImage) plus components.PauseImage, the
+// CRI sandbox image containerd's own config pins for every pod (see
+// internal/bootstrap's containerdConfigTemplate) — not part of any applied
+// manifest, so manifests.RequiredImages alone doesn't cover it.
+func requiredImages(coreDNSImage string) []string {
+	return append([]string{components.PauseImage}, manifests.RequiredImages(coreDNSImage)...)
+}
+
+// importCachedImages imports every requiredImages(coreDNSImage) entry that
+// internal/imagebundle already cached for arch (see Create) into the
+// cluster's own containerd, so kubelet's later CoreDNS/
+// local-path-provisioner pulls (and every pod sandbox's pause image) find
+// the image already present instead of going to the network.
+//
+// This is a pure best-effort optimization, never a hard Start requirement:
+// a ref with no cache entry (never prefetched by Create, or whose prefetch
+// failed) is skipped, and any error here is only logged, not returned — a
+// pod with imagePullPolicy: IfNotPresent falls back to a live registry
+// pull exactly as it did before this existed.
+func (r *Runtime) importCachedImages(ctx context.Context, name string, arch components.Arch, coreDNSImage string) {
+	cache := imagebundle.NewCache(r.imageCacheDir())
+
+	var (
+		images []substrate.ImageSource
+		files  []*os.File
+	)
+
+	defer func() {
+		for _, f := range files {
+			_ = f.Close()
+		}
+	}()
+
+	for _, ref := range requiredImages(coreDNSImage) {
+		path, ok := cache.Lookup(ref, arch)
+		if !ok {
+			continue
+		}
+
+		f, err := os.Open(path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "hostproc: opening cached image %s: %v\n", ref, err)
+
+			continue
+		}
+
+		files = append(files, f)
+		images = append(images, substrate.ImageSource{Reference: ref, Stream: f})
+	}
+
+	if len(images) == 0 {
+		return
+	}
+
+	importCtx, cancel := context.WithTimeout(ctx, containerdImportTimeout)
+	defer cancel()
+
+	client, err := waitContainerdSocket(importCtx, r.containerdSocketPath(name))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "hostproc: waiting for containerd to import prefetched images: %v\n", err)
+
+		return
+	}
+	defer func() { _ = client.Close() }()
+
+	if err := importImages(importCtx, client, images); err != nil {
+		fmt.Fprintf(os.Stderr, "hostproc: importing prefetched images: %v\n", err)
+	}
 }
 
 // applyManifests applies CoreDNS (using coreDNSImage) and
