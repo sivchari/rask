@@ -12,8 +12,12 @@ import (
 const pollInterval = 20 * time.Millisecond
 
 // waitUnixSocket polls until path exists and accepts a connection, or ctx
-// is done.
+// is done. The timeout error includes the last dial error observed, not
+// just ctx.Err(), so a caller can tell e.g. "no such file" (nothing ever
+// listened) apart from any other failure mode.
 func waitUnixSocket(ctx context.Context, path string) error {
+	var lastErr error
+
 	for {
 		conn, err := net.Dial("unix", path)
 		if err == nil {
@@ -22,33 +26,43 @@ func waitUnixSocket(ctx context.Context, path string) error {
 			return nil
 		}
 
+		lastErr = err
+
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("waiting for unix socket %s: %w", path, ctx.Err())
+			return fmt.Errorf("waiting for unix socket %s: %w (last dial error: %v)", path, ctx.Err(), lastErr)
 		case <-time.After(pollInterval):
 		}
 	}
 }
 
 // waitHTTPOK polls url with client until it returns a 2xx status, or ctx is
-// done.
+// done. The timeout error includes the last error/status observed, not
+// just ctx.Err(), so a caller can tell e.g. "connection refused" (process
+// never started listening) apart from "500" (listening but unhealthy).
 func waitHTTPOK(ctx context.Context, client *http.Client, url string) error {
+	var lastErr error
+
 	for {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err == nil {
-			resp, err := client.Do(req)
-			if err == nil {
-				_ = resp.Body.Close()
+		if err != nil {
+			lastErr = err
+		} else if resp, err := client.Do(req); err != nil {
+			lastErr = err
+		} else {
+			status := resp.StatusCode
+			_ = resp.Body.Close()
 
-				if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-					return nil
-				}
+			if status >= 200 && status < 300 {
+				return nil
 			}
+
+			lastErr = fmt.Errorf("unexpected status %d", status)
 		}
 
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("waiting for %s to become healthy: %w", url, ctx.Err())
+			return fmt.Errorf("waiting for %s to become healthy: %w (last error: %v)", url, ctx.Err(), lastErr)
 		case <-time.After(pollInterval):
 		}
 	}

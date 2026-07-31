@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -50,6 +51,22 @@ func TestWaitUnixSocket_TimesOutWhenSocketNeverAppears(t *testing.T) {
 
 	if err := waitUnixSocket(ctx, filepath.Join(t.TempDir(), "never.sock")); err == nil {
 		t.Error("waitUnixSocket = nil error, want timeout error")
+	}
+}
+
+func TestWaitUnixSocket_TimeoutErrorIncludesLastDialError(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	err := waitUnixSocket(ctx, filepath.Join(t.TempDir(), "never.sock"))
+	if err == nil {
+		t.Fatal("waitUnixSocket = nil error, want timeout error")
+	}
+
+	if !strings.Contains(err.Error(), "last dial error:") {
+		t.Errorf("waitUnixSocket error = %q, want it to include the last dial error", err.Error())
 	}
 }
 
@@ -111,6 +128,46 @@ func TestWaitHTTPOK_TimesOutWhenNeverReady(t *testing.T) {
 
 	if err := waitHTTPOK(ctx, srv.Client(), srv.URL); err == nil {
 		t.Error("waitHTTPOK = nil error, want timeout error")
+	}
+}
+
+func TestWaitHTTPOK_TimeoutErrorIncludesLastStatus(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	err := waitHTTPOK(ctx, srv.Client(), srv.URL)
+	if err == nil {
+		t.Fatal("waitHTTPOK = nil error, want timeout error")
+	}
+
+	if !strings.Contains(err.Error(), "503") {
+		t.Errorf("waitHTTPOK error = %q, want it to mention the last HTTP status (503)", err.Error())
+	}
+}
+
+func TestWaitHTTPOK_TimeoutErrorIncludesLastDialError(t *testing.T) {
+	t.Parallel()
+
+	// Nothing listens here; every attempt fails at connect time, not with
+	// a non-2xx status, so the timeout error should surface that dial
+	// failure instead of a generic "context deadline exceeded" only.
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	err := waitHTTPOK(ctx, http.DefaultClient, "http://127.0.0.1:1/")
+	if err == nil {
+		t.Fatal("waitHTTPOK = nil error, want timeout error")
+	}
+
+	if !strings.Contains(err.Error(), "last error:") {
+		t.Errorf("waitHTTPOK error = %q, want it to include the last dial error", err.Error())
 	}
 }
 

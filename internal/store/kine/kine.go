@@ -204,8 +204,13 @@ func (d *Datastore) SeedFrom(_ context.Context, path string) error {
 }
 
 // waitUnixSocket polls until path exists and accepts a connection, or ctx
-// is done.
+// is done. The timeout error includes the last dial error observed, not
+// just ctx.Err(), so a caller can tell what was actually wrong (e.g. "no
+// such file" vs. some other failure) instead of just "context deadline
+// exceeded".
 func waitUnixSocket(ctx context.Context, path string) error {
+	var lastErr error
+
 	for {
 		conn, err := net.Dial("unix", path)
 		if err == nil {
@@ -214,9 +219,11 @@ func waitUnixSocket(ctx context.Context, path string) error {
 			return nil
 		}
 
+		lastErr = err
+
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("%w (last dial error: %v)", ctx.Err(), lastErr)
 		case <-time.After(pollInterval):
 		}
 	}

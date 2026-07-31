@@ -28,6 +28,29 @@ import (
 // defaultClusterName is used when Config.ClusterName is empty.
 const defaultClusterName = "rask"
 
+// Bounded default deadlines for every readiness wait in the boot DAG.
+// Without these, a component that starts but never becomes healthy (wrong
+// cgroup driver, a missing device, a crash-looping binary — real operator
+// errors, not hypotheticals: both found live during in-container testing,
+// see test/benchmark/PROGRESS-incontainer.md) hangs "rask create" forever
+// instead of failing fast with a clear, phase-named error. Values are
+// generous relative to this project's own measured boot latencies
+// (RESULTS-linux.md: node_ready in ~3s on a bare host) so a slow or
+// contended machine doesn't trip a false timeout, while still bounding the
+// wait. Each is threaded into its phase function as an explicit parameter
+// (mirrors internal/substrate/vz/watchdog.go's runBootWatchdog, which takes
+// its timeout the same way) so unit tests can pass a short duration
+// directly instead of waiting out the real default.
+const (
+	datastoreReadyTimeout    = 30 * time.Second
+	containerdReadyTimeout   = 30 * time.Second
+	apiserverReadyTimeout    = 60 * time.Second
+	controlPlaneReadyTimeout = 30 * time.Second
+	kubeletReadyTimeout      = 60 * time.Second
+	kubeProxyReadyTimeout    = 30 * time.Second
+	nodeReadyTimeout         = 60 * time.Second
+)
+
 // Config is everything Boot needs to launch one cluster instance's control
 // plane and node.
 type Config struct {
@@ -201,19 +224,7 @@ func runBootDAG(launchCtx context.Context, cfg Config, tl *Timeline, sup *Superv
 	g, waitCtx := errgroup.WithContext(launchCtx)
 
 	g.Go(func() error {
-		spec := ProcessSpec{Name: "containerd", Path: cfg.Paths.Containerd, Args: []string{"--config", cpaths.configPath}, LogPath: filepath.Join(logDir, "containerd.log")}
-		if err := sup.Launch(launchCtx, spec); err != nil {
-			return err
-		}
-
-		if err := waitUnixSocket(waitCtx, cpaths.socketPath); err != nil {
-			return fmt.Errorf("bootstrap: containerd did not become ready: %w", err)
-		}
-
-		tl.Mark("containerd_up")
-		close(containerdReady)
-
-		return nil
+		return bootContainerd(launchCtx, waitCtx, cfg, tl, sup, cpaths, containerdReady, logDir, containerdReadyTimeout)
 	})
 
 	g.Go(func() error {
@@ -229,7 +240,7 @@ func runBootDAG(launchCtx context.Context, cfg Config, tl *Timeline, sup *Superv
 			return err
 		}
 
-		return bootKubelet(launchCtx, waitCtx, cfg, tl, sup, kpaths, cpki, logDir)
+		return bootKubelet(launchCtx, waitCtx, cfg, tl, sup, kpaths, cpki, logDir, kubeletReadyTimeout)
 	})
 
 	g.Go(func() error {
@@ -237,7 +248,7 @@ func runBootDAG(launchCtx context.Context, cfg Config, tl *Timeline, sup *Superv
 			return err
 		}
 
-		return bootKubeProxy(launchCtx, waitCtx, cfg, tl, sup, kubeProxyConfigPath, logDir)
+		return bootKubeProxy(launchCtx, waitCtx, cfg, tl, sup, kubeProxyConfigPath, logDir, kubeProxyReadyTimeout)
 	})
 
 	g.Go(func() error {
@@ -250,10 +261,37 @@ func runBootDAG(launchCtx context.Context, cfg Config, tl *Timeline, sup *Superv
 			return fmt.Errorf("bootstrap: building clientset: %w", err)
 		}
 
-		return watchNodeReady(waitCtx, clientset, tl)
+		if err := watchNodeReady(waitCtx, clientset, tl, nodeReadyTimeout); err != nil {
+			return fmt.Errorf("bootstrap: node did not become ready within %s: %w", nodeReadyTimeout, err)
+		}
+
+		return nil
 	})
 
 	return g.Wait()
+}
+
+// bootContainerd launches containerd and waits for its unix socket to
+// accept connections, bounded by timeout so a containerd that starts but
+// never opens its socket doesn't hang the DAG forever. See runBootDAG's
+// doc comment for why launchCtx and waitCtx are different contexts.
+func bootContainerd(launchCtx, waitCtx context.Context, cfg Config, tl *Timeline, sup *Supervisor, cpaths *containerdPaths, containerdReady chan<- struct{}, logDir string, timeout time.Duration) error {
+	spec := ProcessSpec{Name: "containerd", Path: cfg.Paths.Containerd, Args: []string{"--config", cpaths.configPath}, LogPath: filepath.Join(logDir, "containerd.log")}
+	if err := sup.Launch(launchCtx, spec); err != nil {
+		return err
+	}
+
+	readyCtx, cancel := context.WithTimeout(waitCtx, timeout)
+	defer cancel()
+
+	if err := waitUnixSocket(readyCtx, cpaths.socketPath); err != nil {
+		return fmt.Errorf("bootstrap: containerd did not become ready within %s: %w", timeout, err)
+	}
+
+	tl.Mark("containerd_up")
+	close(containerdReady)
+
+	return nil
 }
 
 // bootDatastoreAndControlPlane starts the datastore, then the API server
@@ -261,9 +299,12 @@ func runBootDAG(launchCtx context.Context, cfg Config, tl *Timeline, sup *Superv
 // once the API server reports ready. See runBootDAG's doc comment for why
 // launchCtx and waitCtx are different contexts.
 func bootDatastoreAndControlPlane(launchCtx, waitCtx context.Context, cfg Config, tl *Timeline, sup *Supervisor, cpki *ClusterPKI, caPool *x509.CertPool, apiserverReady chan<- struct{}, logDir string) error {
-	endpoint, err := cfg.Datastore.Start(waitCtx)
+	dsCtx, dsCancel := context.WithTimeout(waitCtx, datastoreReadyTimeout)
+	defer dsCancel()
+
+	endpoint, err := cfg.Datastore.Start(dsCtx)
 	if err != nil {
-		return fmt.Errorf("bootstrap: starting datastore: %w", err)
+		return fmt.Errorf("bootstrap: starting datastore within %s: %w", datastoreReadyTimeout, err)
 	}
 
 	tl.Mark("kine_up")
@@ -321,14 +362,18 @@ func bootDatastoreAndControlPlane(launchCtx, waitCtx context.Context, cfg Config
 	apiserverClient := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: caPool, Certificates: []tls.Certificate{adminTLSCert}}}}
 
 	readyzURL := fmt.Sprintf("https://127.0.0.1:%d/readyz", apiserverPort)
-	if err := waitHTTPOK(waitCtx, apiserverClient, readyzURL); err != nil {
-		return fmt.Errorf("bootstrap: apiserver did not become ready: %w", err)
+
+	apiCtx, apiCancel := context.WithTimeout(waitCtx, apiserverReadyTimeout)
+	defer apiCancel()
+
+	if err := waitHTTPOK(apiCtx, apiserverClient, readyzURL); err != nil {
+		return fmt.Errorf("bootstrap: apiserver did not become ready within %s: %w", apiserverReadyTimeout, err)
 	}
 
 	tl.Mark("apiserver_readyz")
 	close(apiserverReady)
 
-	return bootControlPlane(launchCtx, waitCtx, cfg, tl, sup, cpki, caPool, logDir)
+	return bootControlPlane(launchCtx, waitCtx, cfg, tl, sup, cpki, caPool, logDir, controlPlaneReadyTimeout)
 }
 
 // bootControlPlane launches kube-controller-manager and kube-scheduler in
@@ -338,7 +383,7 @@ func bootDatastoreAndControlPlane(launchCtx, waitCtx context.Context, cfg Config
 // verifies server identity via caPool like every other component's
 // readiness check, rather than skipping TLS verification. See runBootDAG's
 // doc comment for why launchCtx and waitCtx are different contexts.
-func bootControlPlane(launchCtx, waitCtx context.Context, cfg Config, tl *Timeline, sup *Supervisor, cpki *ClusterPKI, caPool *x509.CertPool, logDir string) error {
+func bootControlPlane(launchCtx, waitCtx context.Context, cfg Config, tl *Timeline, sup *Supervisor, cpki *ClusterPKI, caPool *x509.CertPool, logDir string, timeout time.Duration) error {
 	healthClient := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: caPool}}}
 
 	cg, cgWaitCtx := errgroup.WithContext(waitCtx)
@@ -365,7 +410,14 @@ func bootControlPlane(launchCtx, waitCtx context.Context, cfg Config, tl *Timeli
 			return err
 		}
 
-		return waitHTTPOK(cgWaitCtx, healthClient, "https://127.0.0.1:10257/healthz")
+		readyCtx, cancel := context.WithTimeout(cgWaitCtx, timeout)
+		defer cancel()
+
+		if err := waitHTTPOK(readyCtx, healthClient, "https://127.0.0.1:10257/healthz"); err != nil {
+			return fmt.Errorf("kube-controller-manager did not become ready within %s: %w", timeout, err)
+		}
+
+		return nil
 	})
 
 	cg.Go(func() error {
@@ -379,7 +431,14 @@ func bootControlPlane(launchCtx, waitCtx context.Context, cfg Config, tl *Timeli
 			return err
 		}
 
-		return waitHTTPOK(cgWaitCtx, healthClient, "https://127.0.0.1:10259/healthz")
+		readyCtx, cancel := context.WithTimeout(cgWaitCtx, timeout)
+		defer cancel()
+
+		if err := waitHTTPOK(readyCtx, healthClient, "https://127.0.0.1:10259/healthz"); err != nil {
+			return fmt.Errorf("kube-scheduler did not become ready within %s: %w", timeout, err)
+		}
+
+		return nil
 	})
 
 	if err := cg.Wait(); err != nil {
@@ -394,7 +453,7 @@ func bootControlPlane(launchCtx, waitCtx context.Context, cfg Config, tl *Timeli
 // bootKubelet launches kubelet once both the API server and containerd are
 // ready, and waits for its healthz probe. See runBootDAG's doc comment for
 // why launchCtx and waitCtx are different contexts.
-func bootKubelet(launchCtx, waitCtx context.Context, cfg Config, tl *Timeline, sup *Supervisor, kpaths *kubeletPaths, cpki *ClusterPKI, logDir string) error {
+func bootKubelet(launchCtx, waitCtx context.Context, cfg Config, tl *Timeline, sup *Supervisor, kpaths *kubeletPaths, cpki *ClusterPKI, logDir string, timeout time.Duration) error {
 	spec := ProcessSpec{Name: "kubelet", Path: cfg.Paths.Kubelet, LogPath: filepath.Join(logDir, "kubelet.log"), Args: []string{
 		"--config=" + kpaths.configPath,
 		"--kubeconfig=" + cpki.KubeletKubeconfigPath,
@@ -407,8 +466,11 @@ func bootKubelet(launchCtx, waitCtx context.Context, cfg Config, tl *Timeline, s
 		return err
 	}
 
-	if err := waitHTTPOK(waitCtx, http.DefaultClient, "http://127.0.0.1:10248/healthz"); err != nil {
-		return fmt.Errorf("bootstrap: kubelet did not become ready: %w", err)
+	readyCtx, cancel := context.WithTimeout(waitCtx, timeout)
+	defer cancel()
+
+	if err := waitHTTPOK(readyCtx, http.DefaultClient, "http://127.0.0.1:10248/healthz"); err != nil {
+		return fmt.Errorf("bootstrap: kubelet did not become ready within %s: %w", timeout, err)
 	}
 
 	tl.Mark("kubelet_started")
@@ -428,7 +490,7 @@ func bootKubelet(launchCtx, waitCtx context.Context, cfg Config, tl *Timeline, s
 // the critical boot path. The rendered KubeProxyConfiguration
 // (writeKubeProxyConfig) uses the same shape a DaemonSet's ConfigMap would
 // mount, so this stays portable if rask grows a DaemonSet form later.
-func bootKubeProxy(launchCtx, waitCtx context.Context, cfg Config, tl *Timeline, sup *Supervisor, kubeProxyConfigPath, logDir string) error {
+func bootKubeProxy(launchCtx, waitCtx context.Context, cfg Config, tl *Timeline, sup *Supervisor, kubeProxyConfigPath, logDir string, timeout time.Duration) error {
 	spec := ProcessSpec{Name: "kube-proxy", Path: cfg.Paths.KubeProxy, LogPath: filepath.Join(logDir, "kube-proxy.log"), Args: []string{
 		"--config=" + kubeProxyConfigPath,
 		"--hostname-override=" + cluster.NodeName,
@@ -437,8 +499,11 @@ func bootKubeProxy(launchCtx, waitCtx context.Context, cfg Config, tl *Timeline,
 		return err
 	}
 
-	if err := waitHTTPOK(waitCtx, http.DefaultClient, "http://127.0.0.1:10256/healthz"); err != nil {
-		return fmt.Errorf("bootstrap: kube-proxy did not become ready: %w", err)
+	readyCtx, cancel := context.WithTimeout(waitCtx, timeout)
+	defer cancel()
+
+	if err := waitHTTPOK(readyCtx, http.DefaultClient, "http://127.0.0.1:10256/healthz"); err != nil {
+		return fmt.Errorf("bootstrap: kube-proxy did not become ready within %s: %w", timeout, err)
 	}
 
 	tl.Mark("kube_proxy_started")
@@ -457,8 +522,17 @@ func buildClientset(kubeconfigPath string) (*kubernetes.Clientset, error) {
 
 // watchNodeReady watches for cluster.NodeName to register (marking
 // node_registered) and then for its Ready condition to become True
-// (marking node_ready), via a real client-go watch rather than polling.
-func watchNodeReady(ctx context.Context, clientset *kubernetes.Clientset, tl *Timeline) error {
+// (marking node_ready), via a real client-go watch rather than polling,
+// bounded by timeout so a node that never registers or never reaches
+// Ready doesn't hang the DAG forever. clientset takes the kubernetes.Interface
+// clientset methods actually need (rather than the concrete
+// *kubernetes.Clientset buildClientset returns), so this is unit-testable
+// against client-go's fake clientset — mirrors
+// internal/manifests.WaitDeploymentReady's existing precedent.
+func watchNodeReady(ctx context.Context, clientset kubernetes.Interface, tl *Timeline, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	registered := false
 
 	for {
