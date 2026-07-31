@@ -6,9 +6,11 @@
 // tree or a `go build` invocation available at runtime to produce the
 // guest's PID 1.
 //
-// The rask-init binary itself (embedded/rask-init) is not committed as a
-// real binary: `make build-rask-init` (see the repo Makefile) cross-compiles
-// it fresh before every `make build`, overwriting the placeholder checked
-// into version control. RaskInitBinary's doc comment explains how a caller
-// detects the placeholder is still in place.
+// The rask-init binary itself (embedded/rask-init) is gitignored rather than
+// committed: `make build-rask-init` (see the repo Makefile) cross-compiles it
+// fresh before every `make build`. It therefore does not exist in a fresh
+// checkout, and this package does not compile until that target has run,
+// which is why CI invokes it ahead of `go build`. RaskInitBinary's doc
+// comment explains how a caller detects a file that is present but is not a
+// real binary.
 package embedded

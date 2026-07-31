@@ -10,10 +10,10 @@ import _ "embed"
 //go:embed rask-init
 var RaskInitBinary []byte
 
-// placeholderMagic is what the committed placeholder file (not a real
-// binary — see this package's doc comment) starts with, letting
-// IsPlaceholder detect "make build-rask-init was never run" at Runtime
-// construction time instead of failing opaquely deep inside a VM boot.
+// placeholderMagic is what a stand-in file (not a real binary — see this
+// package's doc comment) starts with, letting IsPlaceholder detect a
+// rask-init that was never cross-compiled at Runtime construction time
+// instead of failing opaquely deep inside a VM boot.
 const placeholderMagic = "RASK-INIT-PLACEHOLDER"
 
 // IsPlaceholder reports whether RaskInitBinary is still the committed

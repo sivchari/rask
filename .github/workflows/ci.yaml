@@ -19,6 +19,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      # internal/substrate/vz/embedded go:embeds this cross-compiled binary,
+      # which is gitignored rather than committed, so a bare "go build ./..."
+      # cannot compile that package on darwin without it.
+      - run: make build-rask-init
       - run: go build ./...
       - run: go vet ./...
       - run: go test -race -shuffle=on -count=1 ./...
