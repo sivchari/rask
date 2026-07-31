@@ -54,9 +54,10 @@ const corefile = `.:53 {
 // ApplyCoreDNS applies CoreDNS's ServiceAccount, RBAC, ConfigMap,
 // Deployment and Service (fixed at cluster.DNSServiceIP, which kubelet is
 // already configured to use as every pod's resolv.conf nameserver) using
-// clientset. Creating an object that already exists is not an error (see
-// ApplyYAML's doc comment for why).
-func ApplyCoreDNS(ctx context.Context, clientset kubernetes.Interface) error {
+// clientset. The Deployment's container image is image (pass CoreDNSImage
+// for rask's own default). Creating an object that already exists is not an
+// error (see ApplyYAML's doc comment for why).
+func ApplyCoreDNS(ctx context.Context, clientset kubernetes.Interface, image string) error {
 	if err := ignoreAlreadyExists(clientset.CoreV1().ServiceAccounts(coreDNSNamespace).Create(ctx, coreDNSServiceAccount(), metav1.CreateOptions{})); err != nil {
 		return fmt.Errorf("manifests: creating coredns ServiceAccount: %w", err)
 	}
@@ -73,7 +74,7 @@ func ApplyCoreDNS(ctx context.Context, clientset kubernetes.Interface) error {
 		return fmt.Errorf("manifests: creating coredns ConfigMap: %w", err)
 	}
 
-	if err := ignoreAlreadyExists(clientset.AppsV1().Deployments(coreDNSNamespace).Create(ctx, coreDNSDeployment(), metav1.CreateOptions{})); err != nil {
+	if err := ignoreAlreadyExists(clientset.AppsV1().Deployments(coreDNSNamespace).Create(ctx, coreDNSDeployment(image), metav1.CreateOptions{})); err != nil {
 		return fmt.Errorf("manifests: creating coredns Deployment: %w", err)
 	}
 
@@ -137,7 +138,7 @@ func coreDNSConfigMap() *corev1.ConfigMap {
 	}
 }
 
-func coreDNSDeployment() *appsv1.Deployment {
+func coreDNSDeployment(image string) *appsv1.Deployment {
 	replicas := int32(1)
 
 	return &appsv1.Deployment{
@@ -162,7 +163,7 @@ func coreDNSDeployment() *appsv1.Deployment {
 					Containers: []corev1.Container{
 						{
 							Name:  "coredns",
-							Image: CoreDNSImage,
+							Image: image,
 							Args:  []string{"-conf", "/etc/coredns/Corefile"},
 							Ports: []corev1.ContainerPort{
 								{Name: "dns", ContainerPort: 53, Protocol: corev1.ProtocolUDP},

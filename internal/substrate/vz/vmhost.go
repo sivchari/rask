@@ -70,6 +70,26 @@ func RunVMHost(ctx context.Context, homeDir, name string) error {
 		return err
 	}
 
+	// Overlay any files Runtime.Start staged (StartOptions.PrebootFiles)
+	// onto the shared template initramfs as a second, per-cluster cpio
+	// archive, so they land in the guest filesystem before rask-init (and
+	// everything it launches) ever runs. Skipped entirely — reusing the
+	// shared template path unmodified — when nothing was staged, the
+	// overwhelmingly common case.
+	prebootCpio, err := buildPrebootCpio(dataDir)
+	if err != nil {
+		return err
+	}
+
+	if len(prebootCpio) > 0 {
+		combinedPath := filepath.Join(dataDir, "initramfs-combined.cpio")
+		if err := concatInitramfs(combinedPath, initramfsPath, prebootCpio); err != nil {
+			return err
+		}
+
+		initramfsPath = combinedPath
+	}
+
 	if err := createDataDisk(diskPath, defaultDataDiskGB); err != nil {
 		return err
 	}

@@ -3,12 +3,10 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
-	"k8s.io/client-go/tools/clientcmd"
 
-	"github.com/sivchari/rask/internal/cluster"
+	"github.com/sivchari/rask/pkg/cluster"
 )
 
 func newExportCommand(homeDir string) *cobra.Command {
@@ -44,44 +42,21 @@ func newExportKubeconfigCommand(homeDir string) *cobra.Command {
 	return cmd
 }
 
-// exportKubeconfig reads the kubeconfig rask wrote for name at create time
-// (where the cluster, user and context entries are all keyed by the
-// cluster's plain name) and renames its context to match contextFormat.
+// exportKubeconfig delegates to pkg/cluster.Provider.KubeConfig — see
+// create.go's createCluster doc comment for why cmd/rask routes through
+// pkg/cluster rather than duplicating its logic. get.go has no
+// substrate.Runtime to inject a test double for, so cluster.NewProvider
+// (real platform selection) is safe here too — this command never touches
+// a substrate.Runtime at all, only the already-written kubeconfig file.
 func exportKubeconfig(cmd *cobra.Command, homeDir, name, output, contextFormat string) error {
-	exists, err := cluster.Exists(homeDir, name)
+	provider, err := cluster.NewProvider(homeDir)
 	if err != nil {
 		return err
 	}
 
-	if !exists {
-		return fmt.Errorf("cluster %q does not exist", name)
-	}
-
-	kubeconfigPath := filepath.Join(cluster.Dir(homeDir, name), "kubeconfig")
-
-	cfg, err := clientcmd.LoadFromFile(kubeconfigPath)
+	data, err := provider.KubeConfig(name, cluster.ExportOptions{ContextFormat: contextFormat})
 	if err != nil {
-		return fmt.Errorf("reading kubeconfig for cluster %q: %w", name, err)
-	}
-
-	contextName := cluster.FormatContext(contextFormat, name)
-	if contextName != name {
-		ctx, ok := cfg.Contexts[name]
-		if !ok {
-			return fmt.Errorf("kubeconfig for cluster %q has no context named %q", name, name)
-		}
-
-		cfg.Contexts[contextName] = ctx
-		delete(cfg.Contexts, name)
-
-		if cfg.CurrentContext == name {
-			cfg.CurrentContext = contextName
-		}
-	}
-
-	data, err := clientcmd.Write(*cfg)
-	if err != nil {
-		return fmt.Errorf("rendering kubeconfig for cluster %q: %w", name, err)
+		return err
 	}
 
 	if output == "" {

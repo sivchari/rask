@@ -147,7 +147,12 @@ func applyManifests(ctx context.Context, kubeconfigPath string) error {
 
 	g, gctx := errgroup.WithContext(ctx)
 
-	g.Go(func() error { return manifests.ApplyCoreDNS(gctx, clientset) })
+	// The vz guest boot path always uses rask's default CoreDNS image:
+	// StartOptions.CoreDNSImage is not yet plumbed from the host's
+	// Runtime.Start into this guest (see internal/substrate/vz.Runtime.Start's
+	// doc comment for the full list of StartOptions fields vz does not
+	// support yet).
+	g.Go(func() error { return manifests.ApplyCoreDNS(gctx, clientset, manifests.CoreDNSImage) })
 	g.Go(func() error { return manifests.ApplyLocalPathProvisioner(gctx, dyn, mapper) })
 
 	if err := g.Wait(); err != nil {

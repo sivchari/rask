@@ -17,7 +17,7 @@ func TestApplyCoreDNS_CreatesEveryObject(t *testing.T) {
 	clientset := kubefake.NewSimpleClientset()
 	ctx := context.Background()
 
-	if err := ApplyCoreDNS(ctx, clientset); err != nil {
+	if err := ApplyCoreDNS(ctx, clientset, CoreDNSImage); err != nil {
 		t.Fatalf("ApplyCoreDNS: %v", err)
 	}
 
@@ -61,17 +61,39 @@ func TestApplyCoreDNS_CreatesEveryObject(t *testing.T) {
 	}
 }
 
+func TestApplyCoreDNS_UsesTheGivenImage(t *testing.T) {
+	t.Parallel()
+
+	clientset := kubefake.NewSimpleClientset()
+	ctx := context.Background()
+
+	const overrideImage = "123456789012.dkr.ecr.us-west-2.amazonaws.com/eks/coredns:v1.11.4-eksbuild.2"
+
+	if err := ApplyCoreDNS(ctx, clientset, overrideImage); err != nil {
+		t.Fatalf("ApplyCoreDNS: %v", err)
+	}
+
+	dep, err := clientset.AppsV1().Deployments(coreDNSNamespace).Get(ctx, "coredns", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Deployment not created: %v", err)
+	}
+
+	if dep.Spec.Template.Spec.Containers[0].Image != overrideImage {
+		t.Errorf("Deployment image = %q, want %q", dep.Spec.Template.Spec.Containers[0].Image, overrideImage)
+	}
+}
+
 func TestApplyCoreDNS_IdempotentOnReapply(t *testing.T) {
 	t.Parallel()
 
 	clientset := kubefake.NewSimpleClientset()
 	ctx := context.Background()
 
-	if err := ApplyCoreDNS(ctx, clientset); err != nil {
+	if err := ApplyCoreDNS(ctx, clientset, CoreDNSImage); err != nil {
 		t.Fatalf("first ApplyCoreDNS: %v", err)
 	}
 
-	if err := ApplyCoreDNS(ctx, clientset); err != nil {
+	if err := ApplyCoreDNS(ctx, clientset, CoreDNSImage); err != nil {
 		t.Fatalf("second ApplyCoreDNS (should be a no-op, not an error): %v", err)
 	}
 }
@@ -79,7 +101,7 @@ func TestApplyCoreDNS_IdempotentOnReapply(t *testing.T) {
 func TestCoreDNSDeployment_SelectorMatchesPodTemplateLabels(t *testing.T) {
 	t.Parallel()
 
-	dep := coreDNSDeployment()
+	dep := coreDNSDeployment(CoreDNSImage)
 
 	// A Deployment whose selector doesn't match its own pod template
 	// never reports any Ready pods — this is the single most common way
@@ -99,7 +121,7 @@ func TestCoreDNSDeployment_SelectorMatchesPodTemplateLabels(t *testing.T) {
 func TestCoreDNSDeployment_UsesDefaultDNSPolicy(t *testing.T) {
 	t.Parallel()
 
-	dep := coreDNSDeployment()
+	dep := coreDNSDeployment(CoreDNSImage)
 
 	if dep.Spec.Template.Spec.DNSPolicy != corev1.DNSDefault {
 		t.Errorf("DNSPolicy = %q, want %q (ClusterFirst, the zero value, self-loops for CoreDNS's own pod)", dep.Spec.Template.Spec.DNSPolicy, corev1.DNSDefault)

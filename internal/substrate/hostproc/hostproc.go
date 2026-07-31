@@ -104,18 +104,40 @@ func (r *Runtime) timelinePath(name string) string {
 // which is what lets cluster.Exists (a directory-existence check) and a
 // retried "rask create" behave correctly. Start is what actually creates
 // cluster.Dir, and cleans it back up on its own failure (see below).
-func (r *Runtime) Create(ctx context.Context, name string) error {
+//
+// If opts.ComponentDir is set, Create validates it (via
+// components.LocalDirSource) instead of downloading the default
+// kube-apiserver/kube-controller-manager/kube-scheduler/kubelet/kubectl:
+// the whole point of a component-dir override is to avoid rask's own
+// dl.k8s.io dependency, so warming that part of the default cache anyway
+// would defeat it (and could hard-fail Create in a network-restricted
+// environment even though every binary rask actually needs was already
+// provided locally).
+func (r *Runtime) Create(ctx context.Context, name string, opts substrate.StartOptions) error {
 	arch, err := components.HostArch()
 	if err != nil {
 		return err
 	}
 
-	cache := components.NewCache(r.cacheDir())
-	if _, err := cache.Ensure(ctx, components.DefaultK8sVersion, arch); err != nil {
+	src := r.componentSource(opts)
+	if _, err := src.Resolve(ctx, components.DefaultK8sVersion, arch); err != nil {
 		return fmt.Errorf("hostproc: preparing component binaries: %w", err)
 	}
 
 	return nil
+}
+
+// componentSource returns opts.ComponentDir's components.ComponentSource
+// (internal/components.LocalDirSource) if set, else the default download
+// cache (internal/components.DownloadCacheSource).
+func (r *Runtime) componentSource(opts substrate.StartOptions) components.ComponentSource {
+	cache := components.NewCache(r.cacheDir())
+
+	if opts.ComponentDir != "" {
+		return components.NewLocalDirSource(opts.ComponentDir, cache)
+	}
+
+	return components.NewDownloadCacheSource(cache)
 }
 
 // Start boots the cluster's control plane and node (internal/bootstrap.Boot),
@@ -134,9 +156,9 @@ func (r *Runtime) Start(ctx context.Context, name string, opts substrate.StartOp
 		return err
 	}
 
-	cache := components.NewCache(r.cacheDir())
+	src := r.componentSource(opts)
 
-	paths, err := cache.Ensure(ctx, components.DefaultK8sVersion, arch)
+	paths, err := src.Resolve(ctx, components.DefaultK8sVersion, arch)
 	if err != nil {
 		return fmt.Errorf("hostproc: resolving component binaries: %w", err)
 	}
@@ -147,16 +169,27 @@ func (r *Runtime) Start(ctx context.Context, name string, opts substrate.StartOp
 	}
 
 	dataDir := r.dataDir(name)
+
+	// Must happen before bootstrap.Boot: every preboot file is meant to
+	// be readable by a component Boot launches (e.g. an authentication
+	// webhook kubeconfig kube-apiserver reads at startup via an
+	// ExtraAPIServerArgs flag), so it must exist on disk before any
+	// process starts, not just before this cluster is considered ready.
+	if err = substrate.StagePrebootFiles(dataDir, opts.PrebootFiles); err != nil {
+		return fmt.Errorf("hostproc: %w", err)
+	}
+
 	datastore := kine.New(paths.Kine, filepath.Join(dataDir, "kine"))
 
 	result, err := bootstrap.Boot(ctx, bootstrap.Config{
-		ClusterName:       name,
-		DataDir:           dataDir,
-		NodeIP:            nodeIP,
-		Paths:             paths,
-		Datastore:         datastore,
-		ExtraAPIAudiences: opts.ExtraAPIAudiences,
-		SeedPath:          opts.SeedPath,
+		ClusterName:        name,
+		DataDir:            dataDir,
+		NodeIP:             nodeIP,
+		Paths:              paths,
+		Datastore:          datastore,
+		ExtraAPIAudiences:  opts.ExtraAPIAudiences,
+		SeedPath:           opts.SeedPath,
+		ExtraAPIServerArgs: opts.ExtraAPIServerArgs,
 	})
 	if err != nil {
 		return fmt.Errorf("hostproc: %w", err)
@@ -198,7 +231,7 @@ func (r *Runtime) Start(ctx context.Context, name string, opts substrate.StartOp
 	// AlreadyExists), but skipping the round trip entirely is exactly the
 	// create-time cost seeding exists to shave off.
 	if opts.SeedPath == "" {
-		if err = applyManifests(ctx, result.AdminKubeconfigPath); err != nil {
+		if err = applyManifests(ctx, result.AdminKubeconfigPath, coreDNSImage(opts)); err != nil {
 			return fmt.Errorf("hostproc: %w", err)
 		}
 	}
@@ -213,10 +246,19 @@ func (r *Runtime) Start(ctx context.Context, name string, opts substrate.StartOp
 	return nil
 }
 
-// applyManifests applies CoreDNS and local-path-provisioner (+ default
-// StorageClass) to the cluster reachable via kubeconfigPath, in parallel
-// since neither depends on the other.
-func applyManifests(ctx context.Context, kubeconfigPath string) error {
+// coreDNSImage returns opts.CoreDNSImage if set, else manifests.CoreDNSImage.
+func coreDNSImage(opts substrate.StartOptions) string {
+	if opts.CoreDNSImage != "" {
+		return opts.CoreDNSImage
+	}
+
+	return manifests.CoreDNSImage
+}
+
+// applyManifests applies CoreDNS (using coreDNSImage) and
+// local-path-provisioner (+ default StorageClass) to the cluster reachable
+// via kubeconfigPath, in parallel since neither depends on the other.
+func applyManifests(ctx context.Context, kubeconfigPath, coreDNSImage string) error {
 	restConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 	if err != nil {
 		return fmt.Errorf("building rest.Config: %w", err)
@@ -229,7 +271,7 @@ func applyManifests(ctx context.Context, kubeconfigPath string) error {
 
 	g, gctx := errgroup.WithContext(ctx)
 
-	g.Go(func() error { return manifests.ApplyCoreDNS(gctx, clientset) })
+	g.Go(func() error { return manifests.ApplyCoreDNS(gctx, clientset, coreDNSImage) })
 	g.Go(func() error { return manifests.ApplyLocalPathProvisioner(gctx, dyn, mapper) })
 
 	if err := g.Wait(); err != nil {

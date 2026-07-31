@@ -1,16 +1,19 @@
-package main
+package cluster
 
 import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 
 	"github.com/sivchari/rask/internal/substrate"
 )
 
-// fakeRuntime is a substrate.Runtime test double that records calls and
-// returns configurable errors, so command wiring can be tested without a
-// real substrate (VM or host process) implementation.
+// fakeRuntime is a substrate.Runtime test double, mirroring
+// cmd/rask/fake_runtime_test.go's, so Provider's own logic (seed-path
+// resolution, state-directory lifecycle, wait behavior) can be tested
+// without a real substrate.
 type fakeRuntime struct {
 	createErr error
 	startErr  error
@@ -18,10 +21,8 @@ type fakeRuntime struct {
 	deleteErr error
 
 	// onStart, if set, runs during Start after recording the call and
-	// before startErr is returned — for tests simulating a real
-	// substrate's Start-time side effects (e.g. hostproc writing a
-	// timeline file), which must happen before "rask create" moves on
-	// to its own post-Start steps.
+	// before startErr is returned, e.g. to simulate a real substrate
+	// writing a kubeconfig/timeline file as a side effect of Start.
 	onStart func(name string) error
 
 	loadImagesErr error
@@ -35,10 +36,6 @@ type fakeRuntime struct {
 	loadImagesCalls []loadImagesCall
 }
 
-// loadImagesCall records one LoadImages invocation: the cluster name and
-// the Reference of every substrate.ImageSource passed in (Stream is
-// intentionally omitted — tests assert on which images were requested, not
-// on stream identity/content).
 type loadImagesCall struct {
 	name       string
 	references []string
@@ -97,4 +94,32 @@ func (f *fakeRuntime) LoadImages(_ context.Context, name string, images []substr
 	f.loadImagesCalls = append(f.loadImagesCalls, loadImagesCall{name: name, references: references})
 
 	return f.loadImagesErr
+}
+
+// writeFakeKubeconfig writes a minimal, valid kubeconfig for cluster name
+// under homeDir, at the same path Provider.KubeConfigPath computes —
+// standing in for what a real substrate's Start writes.
+func writeFakeKubeconfig(homeDir, name string) error {
+	path := filepath.Join(homeDir, "clusters", name, "kubeconfig")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+
+	content := `apiVersion: v1
+kind: Config
+clusters:
+- name: ` + name + `
+  cluster:
+    server: https://127.0.0.1:6443
+current-context: ` + name + `
+contexts:
+- context:
+    cluster: ` + name + `
+    user: admin
+  name: ` + name + `
+users:
+- name: admin
+`
+
+	return os.WriteFile(path, []byte(content), 0o600)
 }

@@ -47,6 +47,18 @@ const (
 	// bootstrap.Boot writes (PKI, datastore, containerd root/state,
 	// kubelet root, CNI config) lives on the persistent disk, not tmpfs.
 	GuestAgentDataDir = DataMountPoint + "/lib/rask"
+
+	// PrebootDir is where internal/substrate/vz injects
+	// StartOptions.PrebootFiles (see that package's preboot.go), via a
+	// per-cluster cpio archive concatenated onto the template initramfs —
+	// so, unlike everything else under GuestAgentDataDir, these files
+	// exist from the moment the kernel unpacks the initramfs, before
+	// rask-init ever runs, rather than being written at boot time.
+	// Matches substrate.PrebootSubdir's cluster-data-directory-relative
+	// convention (GuestAgentDataDir plays the role of a vz cluster's
+	// "data directory", fixed rather than per-cluster since each cluster
+	// is already its own VM).
+	PrebootDir = GuestAgentDataDir + "/preboot"
 )
 
 // Paths returns the components.Paths pointing at every binary's fixed

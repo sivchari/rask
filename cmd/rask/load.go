@@ -12,6 +12,7 @@ import (
 
 	"github.com/sivchari/rask/internal/cluster"
 	"github.com/sivchari/rask/internal/substrate"
+	raskcluster "github.com/sivchari/rask/pkg/cluster"
 )
 
 func newLoadCommand(rt substrate.Runtime, homeDir string) *cobra.Command {
@@ -62,7 +63,10 @@ func newLoadImageArchiveCommand(rt substrate.Runtime, homeDir string) *cobra.Com
 
 // requireClusterExists rejects with a clear error before either command
 // does any work (spawning "docker save", opening a file, or calling
-// rt.LoadImages) against a cluster that was never created.
+// Provider.LoadImages) against a cluster that was never created. Checked
+// here (not left to Provider.LoadImages's own existence check) so a
+// nonexistent cluster fails before a costly "docker save" ever spawns, not
+// after.
 func requireClusterExists(homeDir, name string) error {
 	exists, err := cluster.Exists(homeDir, name)
 	if err != nil {
@@ -86,8 +90,10 @@ func loadDockerImages(ctx context.Context, rt substrate.Runtime, homeDir, name s
 		return err
 	}
 
+	provider := raskcluster.NewProviderWithRuntime(rt, homeDir)
+
 	for _, ref := range refs {
-		if err := loadOneDockerImage(ctx, rt, name, ref); err != nil {
+		if err := loadOneDockerImage(ctx, provider, name, ref); err != nil {
 			return fmt.Errorf("loading %s into cluster %q: %w", ref, name, err)
 		}
 	}
@@ -96,11 +102,11 @@ func loadDockerImages(ctx context.Context, rt substrate.Runtime, homeDir, name s
 }
 
 // loadOneDockerImage streams "docker save <ref>"'s stdout directly into
-// rt.LoadImages, without ever buffering the whole archive to disk or memory
-// first. If docker save itself fails (no daemon, no such image, ...), that
-// error takes priority over whatever rt.LoadImages made of the resulting
+// provider.LoadImages, without ever buffering the whole archive to disk or
+// memory first. If docker save itself fails (no daemon, no such image, ...),
+// that error takes priority over whatever LoadImages made of the resulting
 // short/empty stream, since it's the actual root cause.
-func loadOneDockerImage(ctx context.Context, rt substrate.Runtime, name, ref string) error {
+func loadOneDockerImage(ctx context.Context, provider *raskcluster.Provider, name, ref string) error {
 	save := exec.CommandContext(ctx, "docker", "save", ref)
 
 	stdout, err := save.StdoutPipe()
@@ -116,7 +122,7 @@ func loadOneDockerImage(ctx context.Context, rt substrate.Runtime, name, ref str
 		return fmt.Errorf("starting docker save (is Docker installed and the daemon running?): %w", err)
 	}
 
-	loadErr := rt.LoadImages(ctx, name, []substrate.ImageSource{{Reference: ref, Stream: stdout}})
+	loadErr := provider.LoadImages(ctx, name, []raskcluster.ImageSource{{Reference: ref, Stream: stdout}})
 	waitErr := save.Wait()
 
 	if waitErr != nil {
@@ -134,8 +140,10 @@ func loadImageArchives(ctx context.Context, rt substrate.Runtime, homeDir, name 
 		return err
 	}
 
+	provider := raskcluster.NewProviderWithRuntime(rt, homeDir)
+
 	for _, path := range paths {
-		if err := loadOneImageArchive(ctx, rt, name, path); err != nil {
+		if err := loadOneImageArchive(ctx, provider, name, path); err != nil {
 			return fmt.Errorf("loading %s into cluster %q: %w", path, name, err)
 		}
 	}
@@ -143,12 +151,12 @@ func loadImageArchives(ctx context.Context, rt substrate.Runtime, homeDir, name 
 	return nil
 }
 
-func loadOneImageArchive(ctx context.Context, rt substrate.Runtime, name, path string) error {
+func loadOneImageArchive(ctx context.Context, provider *raskcluster.Provider, name, path string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("opening %s: %w", path, err)
 	}
 	defer func() { _ = f.Close() }()
 
-	return rt.LoadImages(ctx, name, []substrate.ImageSource{{Reference: path, Stream: f}})
+	return provider.LoadImages(ctx, name, []raskcluster.ImageSource{{Reference: path, Stream: f}})
 }

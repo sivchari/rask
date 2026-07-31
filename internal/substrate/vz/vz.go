@@ -88,9 +88,17 @@ func (r *Runtime) timelinePath(name string) string {
 // cluster.Dir(homeDir, name) itself for the same reason
 // internal/substrate/hostproc.Create doesn't: a failed Create should leave
 // no trace that would block a retried "rask create".
-func (r *Runtime) Create(ctx context.Context, name string) error {
+//
+// opts.ComponentDir is rejected with a clear error if set — see
+// Start's doc comment for why a --component-dir override has no vz
+// equivalent yet.
+func (r *Runtime) Create(ctx context.Context, name string, opts substrate.StartOptions) error {
 	if embedded.IsPlaceholder() {
 		return errors.New("vz: internal/substrate/vz/embedded/rask-init is still the placeholder: run `make build-rask-init` first")
+	}
+
+	if opts.ComponentDir != "" {
+		return errors.New("vz: --component-dir is not supported by the vz substrate yet (see Start's doc comment); the shared template initramfs every vz cluster boots from is built once per host, not per cluster, so a per-cluster component override needs a per-cluster initramfs — not yet implemented")
 	}
 
 	cache := components.NewCache(filepath.Join(r.homeDir, "cache"))
@@ -117,16 +125,42 @@ func (r *Runtime) Create(ctx context.Context, name string) error {
 // captured directly in this closure (not re-read from the pidfile) so
 // cleanup still finds and terminates the process even if the pidfile write
 // itself is what failed.
-// opts is currently unused: extra API audiences and prebaked-seed selection
-// are threaded through the hostproc substrate (see
+//
+// Most of opts is not honored yet: extra API audiences and prebaked-seed
+// selection are threaded through the hostproc substrate (see
 // internal/substrate/hostproc.Runtime.Start); vz's guest-side boot path does
 // not yet plumb Config.ExtraAPIAudiences or Config.SeedPath through to the
 // in-guest bootstrap.Boot call, and internal/prebake's seed-build path
 // (which extracts a seed's source file from a stopped cluster's host
 // filesystem) has no vz equivalent yet either, since a vz cluster's
 // datastore lives inside the guest VM's own disk, not on a host-readable
-// path.
-func (r *Runtime) Start(ctx context.Context, name string, _ substrate.StartOptions) (err error) {
+// path. Those two are silently ignored, an existing, documented gap.
+//
+// opts.ExtraAPIServerArgs and opts.CoreDNSImage are new fields with no vz
+// support at all yet and are rejected with a clear error instead of being
+// silently dropped like the two above: unlike a missing TokenReview
+// audience or a slower cold boot (SeedPath), silently ignoring either of
+// these would substitute a caller-specified security-relevant apiserver
+// flag or container image with rask's own default without any visible
+// signal that happened.
+//
+// opts.PrebootFiles IS supported: they are staged host-side under
+// r.dataDir(name) (substrate.StagePrebootFiles) and RunVMHost — which,
+// unlike this function, does run on the same host filesystem as that
+// staging directory — reads them back and injects them into the guest via
+// a per-cluster cpio archive (see preboot.go's buildPrebootCpio) concatenated
+// onto the shared template initramfs, since the guest VM itself has no
+// shared filesystem with the host to read StartOptions.PrebootFiles.Src
+// paths from directly.
+func (r *Runtime) Start(ctx context.Context, name string, opts substrate.StartOptions) (err error) {
+	if len(opts.ExtraAPIServerArgs) > 0 {
+		return errors.New("vz: --apiserver-arg is not supported by the vz substrate yet")
+	}
+
+	if opts.CoreDNSImage != "" {
+		return errors.New("vz: --coredns-image is not supported by the vz substrate yet")
+	}
+
 	clusterDir := cluster.Dir(r.homeDir, name)
 	if err := os.MkdirAll(clusterDir, 0o755); err != nil {
 		return fmt.Errorf("vz: creating %s: %w", clusterDir, err)
@@ -149,6 +183,15 @@ func (r *Runtime) Start(ctx context.Context, name string, _ substrate.StartOptio
 			_ = os.RemoveAll(clusterDir)
 		}
 	}()
+
+	// Staged host-side, read back and injected into the guest's per-cluster
+	// cpio by RunVMHost (a separate process spawnVMHost execs below) — see
+	// preboot.go's buildPrebootCpio. Must happen before spawnVMHost: by the
+	// time that process starts building the combined initramfs, every
+	// preboot file needs to already be on disk.
+	if err = substrate.StagePrebootFiles(r.dataDir(name), opts.PrebootFiles); err != nil {
+		return fmt.Errorf("vz: %w", err)
+	}
 
 	pid, err = r.spawnVMHost(name)
 	if err != nil {

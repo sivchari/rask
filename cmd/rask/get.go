@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/sivchari/rask/internal/cluster"
+	"github.com/sivchari/rask/pkg/cluster"
 )
 
 func newGetCommand(homeDir string) *cobra.Command {
@@ -24,7 +24,18 @@ func newGetClustersCommand(homeDir string) *cobra.Command {
 		Use:   "clusters",
 		Short: "List clusters",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			names, err := cluster.List(homeDir)
+			// get has no substrate.Runtime to inject a test double for
+			// (List is pure directory listing); NewProvider's real
+			// platform-runtime selection is never exercised by this
+			// command, so using it directly here (rather than
+			// NewProviderWithRuntime, unlike every other cmd/rask
+			// command) is safe in tests too.
+			provider, err := cluster.NewProvider(homeDir)
+			if err != nil {
+				return err
+			}
+
+			names, err := provider.List()
 			if err != nil {
 				return err
 			}

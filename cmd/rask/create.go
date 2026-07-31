@@ -1,21 +1,14 @@
 package main
 
 import (
-	"context"
 	"fmt"
-	"os"
-	"path/filepath"
-	"time"
+	"strings"
 
 	"github.com/spf13/cobra"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 
-	"github.com/sivchari/rask/internal/cluster"
-	"github.com/sivchari/rask/internal/components"
 	"github.com/sivchari/rask/internal/manifests"
-	"github.com/sivchari/rask/internal/prebake"
 	"github.com/sivchari/rask/internal/substrate"
+	"github.com/sivchari/rask/pkg/cluster"
 )
 
 // apiAudienceFlag is the --api-audience flag name, repeatable so callers
@@ -23,15 +16,18 @@ import (
 // projected ServiceAccount token uses "haro").
 const apiAudienceFlag = "api-audience"
 
-// waitNode and waitCoreDNS are the allowed --wait values.
+// apiserverArgFlag, prebootFileFlag, componentDirFlag and coreDNSImageFlag
+// are the fjord-integration seam flags: a caller-supplied kube-apiserver
+// flag (kubeadm-style), a file to place into the cluster's data directory
+// before any process starts, a local directory of pre-extracted core
+// Kubernetes binaries, and a CoreDNS image override, respectively. Each maps
+// directly onto the like-named pkg/cluster.Options field.
 const (
-	waitNode    = "node"
-	waitCoreDNS = "coredns"
+	apiserverArgFlag = "apiserver-arg"
+	prebootFileFlag  = "preboot-file"
+	componentDirFlag = "component-dir"
+	coreDNSImageFlag = "coredns-image"
 )
-
-// coreDNSWaitTimeout bounds --wait=coredns so a broken cluster fails fast
-// instead of hanging "rask create" forever.
-const coreDNSWaitTimeout = 60 * time.Second
 
 func newCreateCommand(rt substrate.Runtime, homeDir string) *cobra.Command {
 	cmd := &cobra.Command{
@@ -44,131 +40,99 @@ func newCreateCommand(rt substrate.Runtime, homeDir string) *cobra.Command {
 	return cmd
 }
 
+// createClusterFlags holds every "rask create cluster" flag value, passed
+// as one unit from RunE to createCluster to keep both signatures from
+// growing a parameter per flag.
+type createClusterFlags struct {
+	name          string
+	wait          string
+	verbose       bool
+	apiAudiences  []string
+	apiserverArgs []string
+	prebootFiles  []string
+	componentDir  string
+	coreDNSImage  string
+}
+
 func newCreateClusterCommand(rt substrate.Runtime, homeDir string) *cobra.Command {
-	var (
-		name         string
-		wait         string
-		verbose      bool
-		apiAudiences []string
-	)
+	var flags createClusterFlags
 
 	cmd := &cobra.Command{
 		Use:   "cluster",
 		Short: "Create a new cluster",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return createCluster(cmd, rt, homeDir, name, wait, verbose, apiAudiences)
+			return createCluster(cmd, rt, homeDir, flags)
 		},
 	}
 
-	cmd.Flags().StringVar(&name, "name", defaultClusterName, "cluster name")
-	cmd.Flags().StringVar(&wait, "wait", waitNode, `what to wait for before returning: "node" or "coredns"`)
-	cmd.Flags().BoolVar(&verbose, "verbose", false, "print a phase-by-phase boot latency breakdown")
-	cmd.Flags().StringArrayVar(&apiAudiences, apiAudienceFlag, nil,
+	cmd.Flags().StringVar(&flags.name, "name", defaultClusterName, "cluster name")
+	cmd.Flags().StringVar(&flags.wait, "wait", cluster.WaitNode, `what to wait for before returning: "node" or "coredns"`)
+	cmd.Flags().BoolVar(&flags.verbose, "verbose", false, "print a phase-by-phase boot latency breakdown")
+	cmd.Flags().StringArrayVar(&flags.apiAudiences, apiAudienceFlag, nil,
 		`extra apiserver --api-audiences value beyond the cluster's own service-account issuer (repeatable), for TokenReview clients that request a custom audience (e.g. --api-audience haro)`)
+	cmd.Flags().StringArrayVar(&flags.apiserverArgs, apiserverArgFlag, nil,
+		`extra kube-apiserver flag as key=value (repeatable, kubeadm-style, no leading "--"), appended after rask's own flags; a key naming a rask-managed flag is rejected`)
+	cmd.Flags().StringArrayVar(&flags.prebootFiles, prebootFileFlag, nil,
+		`file to place into the cluster's data directory before any process starts, as src=dest (repeatable); dest is relative to <data-dir>/preboot (see pkg/cluster.PrebootFile)`)
+	cmd.Flags().StringVar(&flags.componentDir, componentDirFlag, "",
+		"local directory containing pre-extracted kube-apiserver/kube-controller-manager/kube-scheduler/kubelet/kubectl binaries, used instead of rask's default dl.k8s.io download cache")
+	cmd.Flags().StringVar(&flags.coreDNSImage, coreDNSImageFlag, "",
+		fmt.Sprintf("CoreDNS image to use instead of rask's default (%s)", manifests.CoreDNSImage))
 
 	return cmd
 }
 
-// createCluster creates the cluster's substrate instance and, only once
-// that has fully succeeded, its local state directory. This keeps a failed
-// create (expected while the substrate is a stub) from leaving behind state
-// that would make a retry think the cluster already exists.
-func createCluster(cmd *cobra.Command, rt substrate.Runtime, homeDir, name, wait string, verbose bool, apiAudiences []string) error {
-	if wait != waitNode && wait != waitCoreDNS {
-		return fmt.Errorf(`invalid --wait %q: must be %q or %q`, wait, waitNode, waitCoreDNS)
-	}
-
-	ctx := cmd.Context()
-
-	exists, err := cluster.Exists(homeDir, name)
+// createCluster delegates to pkg/cluster.Provider.Create, which is the
+// single implementation of "create a cluster" both this CLI and any Go
+// library consumer (e.g. fjord) go through — see that package's doc comment.
+// rt is wrapped via cluster.NewProviderWithRuntime rather than
+// cluster.NewProvider so this command keeps using the same
+// platform-selected (or, in tests, fake) substrate.Runtime the rest of
+// cmd/rask already shares.
+func createCluster(cmd *cobra.Command, rt substrate.Runtime, homeDir string, flags createClusterFlags) error {
+	prebootFiles, err := parsePrebootFiles(flags.prebootFiles)
 	if err != nil {
 		return err
 	}
 
-	if exists {
-		return fmt.Errorf("cluster %q already exists", name)
+	provider := cluster.NewProviderWithRuntime(rt, homeDir)
+
+	result, err := provider.Create(cmd.Context(), flags.name, cluster.Options{
+		Wait:               flags.wait,
+		ExtraAPIAudiences:  flags.apiAudiences,
+		ExtraAPIServerArgs: flags.apiserverArgs,
+		PrebootFiles:       prebootFiles,
+		ComponentDir:       flags.componentDir,
+		CoreDNSImage:       flags.coreDNSImage,
+	})
+	if err != nil {
+		return err
 	}
 
-	if err := rt.Create(ctx, name); err != nil {
-		return fmt.Errorf("cluster %q: %w", name, err)
-	}
-
-	// Start blocks until the node is Ready internally (see
-	// internal/bootstrap.Boot), which is what satisfies the "node"
-	// (default) --wait value; nothing further is needed for it here.
-	opts := substrate.StartOptions{ExtraAPIAudiences: apiAudiences}
-
-	// A seed matching the exact Kubernetes version and default manifest
-	// bundle this build ships (internal/prebake.Key) is used automatically
-	// when present, with no flag needed: it's a pure optimization a
-	// substrate implementation applies before booting (see
-	// internal/substrate/hostproc.Runtime.Start), never a behavior change,
-	// so there's nothing for a caller to opt into.
-	if seedPath := prebake.Path(homeDir, components.DefaultK8sVersion); fileExists(seedPath) {
-		opts.SeedPath = seedPath
-	}
-
-	if err := rt.Start(ctx, name, opts); err != nil {
-		return fmt.Errorf("cluster %q: %w", name, err)
-	}
-
-	if err := os.MkdirAll(cluster.Dir(homeDir, name), 0o755); err != nil {
-		return fmt.Errorf("creating state directory for cluster %q: %w", name, err)
-	}
-
-	if wait == waitCoreDNS {
-		if err := waitForCoreDNS(ctx, homeDir, name); err != nil {
-			return fmt.Errorf("cluster %q: waiting for CoreDNS: %w", name, err)
-		}
-	}
-
-	if verbose {
-		printTimeline(cmd, homeDir, name)
+	if flags.verbose && result.Timeline != "" {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), result.Timeline)
 	}
 
 	return nil
 }
 
-// fileExists reports whether path exists and is a regular file.
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-
-	return err == nil && !info.IsDir()
-}
-
-// waitForCoreDNS polls the CoreDNS Deployment (applied by
-// internal/manifests during Start) until it reports at least one Ready
-// replica.
-func waitForCoreDNS(ctx context.Context, homeDir, name string) error {
-	kubeconfigPath := filepath.Join(cluster.Dir(homeDir, name), "kubeconfig")
-
-	restConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
-	if err != nil {
-		return fmt.Errorf("loading kubeconfig: %w", err)
+// parsePrebootFiles parses every --preboot-file "src=dest" flag value into
+// a cluster.PrebootFile.
+func parsePrebootFiles(raw []string) ([]cluster.PrebootFile, error) {
+	if len(raw) == 0 {
+		return nil, nil
 	}
 
-	clientset, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		return fmt.Errorf("building clientset: %w", err)
+	files := make([]cluster.PrebootFile, 0, len(raw))
+
+	for _, r := range raw {
+		src, dest, ok := strings.Cut(r, "=")
+		if !ok || src == "" || dest == "" {
+			return nil, fmt.Errorf("invalid --%s %q: must be src=dest", prebootFileFlag, r)
+		}
+
+		files = append(files, cluster.PrebootFile{Src: src, Dest: dest})
 	}
 
-	waitCtx, cancel := context.WithTimeout(ctx, coreDNSWaitTimeout)
-	defer cancel()
-
-	return manifests.WaitDeploymentReady(waitCtx, clientset, "kube-system", "coredns")
-}
-
-// printTimeline prints the phase-by-phase boot latency breakdown a
-// substrate implementation may have written (see
-// internal/substrate/hostproc's timelinePath). Best-effort: silently does
-// nothing if absent, since not every substrate necessarily produces one.
-func printTimeline(cmd *cobra.Command, homeDir, name string) {
-	path := filepath.Join(cluster.Dir(homeDir, name), "data", "timeline.txt")
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return
-	}
-
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), string(data))
+	return files, nil
 }

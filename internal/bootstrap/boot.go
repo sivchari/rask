@@ -93,6 +93,13 @@ type Config struct {
 	// TokenReview client that requests a custom audience (see
 	// apiAudiences in config.go).
 	ExtraAPIAudiences []string
+
+	// ExtraAPIServerArgs are additional "key=value" kube-apiserver flags
+	// (kubeadm-style, no leading "--"), appended to the flags rask itself
+	// sets below. A key naming one of rask's own flags is rejected with an
+	// error (see buildAPIServerArgs in config.go for why, and for the
+	// collision semantics).
+	ExtraAPIServerArgs []string
 }
 
 // Result is what Boot returns once the node is Ready.
@@ -344,6 +351,11 @@ func bootDatastoreAndControlPlane(launchCtx, waitCtx context.Context, cfg Config
 		"--kubelet-preferred-address-types=InternalIP,Hostname",
 		"--secure-port=" + strconv.Itoa(apiserverPort),
 		"--advertise-address=" + cfg.NodeIP,
+	}
+
+	apiserverArgs, err = buildAPIServerArgs(apiserverArgs, cfg.ExtraAPIServerArgs)
+	if err != nil {
+		return err
 	}
 
 	apiserverSpec := ProcessSpec{Name: "kube-apiserver", Path: cfg.Paths.KubeAPIServer, Args: apiserverArgs, LogPath: filepath.Join(logDir, "kube-apiserver.log")}

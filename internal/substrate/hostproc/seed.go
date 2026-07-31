@@ -36,7 +36,7 @@ const buildSeedManifestSettleTimeout = 60 * time.Second
 // a failed build never leaves it running or lingering on disk — mirroring
 // Start's own failure-cleanup contract.
 func (r *Runtime) BuildSeed(ctx context.Context, buildName, outPath string) (err error) {
-	if err = r.Create(ctx, buildName); err != nil {
+	if err = r.Create(ctx, buildName, substrate.StartOptions{}); err != nil {
 		return fmt.Errorf("hostproc: seed build: %w", err)
 	}
 

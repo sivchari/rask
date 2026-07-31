@@ -10,6 +10,7 @@ import (
 
 	"github.com/sivchari/rask/internal/cluster"
 	"github.com/sivchari/rask/internal/components"
+	"github.com/sivchari/rask/internal/manifests"
 	"github.com/sivchari/rask/internal/prebake"
 	"github.com/sivchari/rask/internal/substrate"
 	"github.com/sivchari/rask/internal/substrate/hostproc"
@@ -61,7 +62,11 @@ func buildSeed(ctx context.Context, hp *hostproc.Runtime, homeDir string) error 
 		return fmt.Errorf("a previous seed build left behind cluster %q; run `rask delete cluster --name %s` first", seedBuildClusterName, seedBuildClusterName)
 	}
 
-	outPath := prebake.Path(homeDir, components.DefaultK8sVersion)
+	// Always built against rask's own default CoreDNS image: BuildSeed
+	// (like this command) has no --coredns-image flag of its own, since a
+	// seed built with an overridden image would only ever match a create
+	// request for that exact same image (see prebake.Key's doc comment).
+	outPath := prebake.Path(homeDir, components.DefaultK8sVersion, manifests.CoreDNSImage)
 
 	return hp.BuildSeed(ctx, seedBuildClusterName, outPath)
 }

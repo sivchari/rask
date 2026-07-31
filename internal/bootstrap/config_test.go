@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -199,5 +200,78 @@ func TestAPIAudiences(t *testing.T) {
 				t.Errorf("apiAudiences(%q, %v) = %q, want %q", tt.issuer, tt.extra, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestBuildAPIServerArgs_AppendsExtraArgsAfterBase(t *testing.T) {
+	t.Parallel()
+
+	base := []string{"--secure-port=6443", "--anonymous-auth=false"}
+	extra := []string{"authentication-token-webhook-config-file=/var/lib/rask/preboot/webhook.yaml", "requestheader-allowed-names="}
+
+	got, err := buildAPIServerArgs(base, extra)
+	if err != nil {
+		t.Fatalf("buildAPIServerArgs: %v", err)
+	}
+
+	want := []string{
+		"--secure-port=6443",
+		"--anonymous-auth=false",
+		"--authentication-token-webhook-config-file=/var/lib/rask/preboot/webhook.yaml",
+		"--requestheader-allowed-names=",
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("buildAPIServerArgs() = %v, want %v", got, want)
+	}
+}
+
+func TestBuildAPIServerArgs_RejectsCollisionWithManagedFlag(t *testing.T) {
+	t.Parallel()
+
+	base := []string{"--secure-port=6443", "--anonymous-auth=false"}
+
+	_, err := buildAPIServerArgs(base, []string{"anonymous-auth=true"})
+	if err == nil {
+		t.Fatal("buildAPIServerArgs() with a managed-flag collision = nil error, want error")
+	}
+
+	if !strings.Contains(err.Error(), "anonymous-auth") {
+		t.Errorf("buildAPIServerArgs() error = %v, want it to name the colliding flag", err)
+	}
+}
+
+func TestBuildAPIServerArgs_RejectsCollisionWithLeadingDashes(t *testing.T) {
+	t.Parallel()
+
+	base := []string{"--secure-port=6443"}
+
+	_, err := buildAPIServerArgs(base, []string{"--secure-port=9999"})
+	if err == nil {
+		t.Fatal("buildAPIServerArgs() with a --key=value extra arg colliding with a managed flag = nil error, want error")
+	}
+}
+
+func TestBuildAPIServerArgs_RejectsMissingEquals(t *testing.T) {
+	t.Parallel()
+
+	_, err := buildAPIServerArgs(nil, []string{"just-a-flag-no-value"})
+	if err == nil {
+		t.Fatal("buildAPIServerArgs() with a key-only extra arg = nil error, want error")
+	}
+}
+
+func TestBuildAPIServerArgs_NoExtraArgsReturnsBaseUnchanged(t *testing.T) {
+	t.Parallel()
+
+	base := []string{"--secure-port=6443"}
+
+	got, err := buildAPIServerArgs(base, nil)
+	if err != nil {
+		t.Fatalf("buildAPIServerArgs: %v", err)
+	}
+
+	if !reflect.DeepEqual(got, base) {
+		t.Errorf("buildAPIServerArgs() = %v, want %v", got, base)
 	}
 }

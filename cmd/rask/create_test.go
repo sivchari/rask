@@ -10,6 +10,7 @@ import (
 
 	"github.com/sivchari/rask/internal/cluster"
 	"github.com/sivchari/rask/internal/components"
+	"github.com/sivchari/rask/internal/manifests"
 	"github.com/sivchari/rask/internal/prebake"
 	"github.com/sivchari/rask/internal/substrate"
 )
@@ -20,7 +21,7 @@ func TestCreateCluster_UsesMatchingSeedWhenPresent(t *testing.T) {
 	homeDir := t.TempDir()
 	rt := &fakeRuntime{}
 
-	seedPath := prebake.Path(homeDir, components.DefaultK8sVersion)
+	seedPath := prebake.Path(homeDir, components.DefaultK8sVersion, manifests.CoreDNSImage)
 	mustMkdirAll(t, filepath.Dir(seedPath))
 
 	if err := os.WriteFile(seedPath, []byte("fake seed sqlite contents"), 0o644); err != nil {
@@ -323,6 +324,148 @@ func TestCreateCluster_NoAPIAudienceFlagPassesEmptySlice(t *testing.T) {
 
 	if got := rt.startOptsCalls[0].ExtraAPIAudiences; len(got) != 0 {
 		t.Errorf("StartOptions.ExtraAPIAudiences = %v, want empty", got)
+	}
+}
+
+func TestCreateCluster_APIServerArgFlagPassedThroughToStart(t *testing.T) {
+	t.Parallel()
+
+	homeDir := t.TempDir()
+	rt := &fakeRuntime{}
+
+	root := newRootCommand(rt, homeDir)
+	root.SetArgs([]string{
+		"create", "cluster", "--name", "dev",
+		"--apiserver-arg", "authentication-token-webhook-config-file=/tmp/webhook.yaml",
+		"--apiserver-arg", "requestheader-allowed-names=",
+	})
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute(): %v", err)
+	}
+
+	if len(rt.startOptsCalls) != 1 {
+		t.Fatalf("startOptsCalls = %v, want exactly 1 call", rt.startOptsCalls)
+	}
+
+	want := []string{"authentication-token-webhook-config-file=/tmp/webhook.yaml", "requestheader-allowed-names="}
+	if got := rt.startOptsCalls[0].ExtraAPIServerArgs; !equalStringSlices(got, want) {
+		t.Errorf("StartOptions.ExtraAPIServerArgs = %v, want %v", got, want)
+	}
+}
+
+func TestCreateCluster_PrebootFileFlagParsedAndPassedThroughToStart(t *testing.T) {
+	t.Parallel()
+
+	homeDir := t.TempDir()
+	rt := &fakeRuntime{}
+
+	root := newRootCommand(rt, homeDir)
+	root.SetArgs([]string{
+		"create", "cluster", "--name", "dev",
+		"--preboot-file", "/tmp/webhook-kubeconfig.yaml=auth/webhook.yaml",
+	})
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute(): %v", err)
+	}
+
+	if len(rt.startOptsCalls) != 1 {
+		t.Fatalf("startOptsCalls = %v, want exactly 1 call", rt.startOptsCalls)
+	}
+
+	want := []substrate.PrebootFile{{Src: "/tmp/webhook-kubeconfig.yaml", Dest: "auth/webhook.yaml"}}
+	if got := rt.startOptsCalls[0].PrebootFiles; len(got) != 1 || got[0] != want[0] {
+		t.Errorf("StartOptions.PrebootFiles = %v, want %v", got, want)
+	}
+}
+
+func TestCreateCluster_InvalidPrebootFileFlagRejectsWithoutCallingRuntime(t *testing.T) {
+	t.Parallel()
+
+	homeDir := t.TempDir()
+	rt := &fakeRuntime{}
+
+	root := newRootCommand(rt, homeDir)
+	root.SetArgs([]string{"create", "cluster", "--name", "dev", "--preboot-file", "no-equals-sign"})
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+
+	if err := root.Execute(); err == nil {
+		t.Fatal("Execute() with an invalid --preboot-file = nil error, want error")
+	}
+
+	if len(rt.createCalls) != 0 {
+		t.Errorf("createCalls = %v, want no calls", rt.createCalls)
+	}
+}
+
+func TestCreateCluster_ComponentDirFlagPassedThroughToCreateAndStart(t *testing.T) {
+	t.Parallel()
+
+	homeDir := t.TempDir()
+	rt := &fakeRuntime{}
+
+	root := newRootCommand(rt, homeDir)
+	root.SetArgs([]string{"create", "cluster", "--name", "dev", "--component-dir", "/opt/eksd/bin"})
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute(): %v", err)
+	}
+
+	if len(rt.createOptsCalls) != 1 || rt.createOptsCalls[0].ComponentDir != "/opt/eksd/bin" {
+		t.Errorf("createOptsCalls = %v, want ComponentDir = /opt/eksd/bin", rt.createOptsCalls)
+	}
+
+	if len(rt.startOptsCalls) != 1 || rt.startOptsCalls[0].ComponentDir != "/opt/eksd/bin" {
+		t.Errorf("startOptsCalls = %v, want ComponentDir = /opt/eksd/bin", rt.startOptsCalls)
+	}
+}
+
+func TestCreateCluster_CoreDNSImageFlagPassedThroughAndAffectsSeedLookup(t *testing.T) {
+	t.Parallel()
+
+	homeDir := t.TempDir()
+	rt := &fakeRuntime{}
+
+	const overrideImage = "123456789012.dkr.ecr.us-west-2.amazonaws.com/eks/coredns:v1.11.4-eksbuild.2"
+
+	// A seed built for the default CoreDNS image must NOT be picked up
+	// for a create request using a different --coredns-image: prebake.Key
+	// incorporates the image, so this seed file's key won't match.
+	defaultSeedPath := prebake.Path(homeDir, components.DefaultK8sVersion, manifests.CoreDNSImage)
+	mustMkdirAll(t, filepath.Dir(defaultSeedPath))
+
+	if err := os.WriteFile(defaultSeedPath, []byte("fake seed sqlite contents"), 0o644); err != nil {
+		t.Fatalf("writing fake seed file: %v", err)
+	}
+
+	root := newRootCommand(rt, homeDir)
+	root.SetArgs([]string{"create", "cluster", "--name", "dev", "--coredns-image", overrideImage})
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute(): %v", err)
+	}
+
+	if len(rt.startOptsCalls) != 1 {
+		t.Fatalf("startOptsCalls = %v, want exactly 1 call", rt.startOptsCalls)
+	}
+
+	got := rt.startOptsCalls[0]
+	if got.CoreDNSImage != overrideImage {
+		t.Errorf("StartOptions.CoreDNSImage = %q, want %q", got.CoreDNSImage, overrideImage)
+	}
+
+	if got.SeedPath != "" {
+		t.Errorf("StartOptions.SeedPath = %q, want empty (the only cached seed is for the default image)", got.SeedPath)
 	}
 }
 

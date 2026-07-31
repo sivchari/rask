@@ -2,13 +2,11 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 
-	"github.com/sivchari/rask/internal/cluster"
 	"github.com/sivchari/rask/internal/substrate"
+	"github.com/sivchari/rask/pkg/cluster"
 )
 
 func newDeleteCommand(rt substrate.Runtime, homeDir string) *cobra.Command {
@@ -38,32 +36,9 @@ func newDeleteClusterCommand(rt substrate.Runtime, homeDir string) *cobra.Comman
 	return cmd
 }
 
-// deleteCluster stops the cluster's substrate instance, then removes it
-// and, only once that has succeeded, its local state directory. Stop is
-// required first: substrate.Runtime's contract makes Delete an error on a
-// still-running cluster (hostproc's Start could otherwise leave orphaned
-// processes with nothing left to stop them).
+// deleteCluster delegates to pkg/cluster.Provider.Delete — see
+// create.go's createCluster doc comment for why cmd/rask routes through
+// pkg/cluster rather than duplicating its logic.
 func deleteCluster(ctx context.Context, rt substrate.Runtime, homeDir, name string) error {
-	exists, err := cluster.Exists(homeDir, name)
-	if err != nil {
-		return err
-	}
-
-	if !exists {
-		return fmt.Errorf("cluster %q does not exist", name)
-	}
-
-	if err := rt.Stop(ctx, name); err != nil {
-		return fmt.Errorf("cluster %q: %w", name, err)
-	}
-
-	if err := rt.Delete(ctx, name); err != nil {
-		return fmt.Errorf("cluster %q: %w", name, err)
-	}
-
-	if err := os.RemoveAll(cluster.Dir(homeDir, name)); err != nil {
-		return fmt.Errorf("removing state directory for cluster %q: %w", name, err)
-	}
-
-	return nil
+	return cluster.NewProviderWithRuntime(rt, homeDir).Delete(ctx, name)
 }

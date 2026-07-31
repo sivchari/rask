@@ -51,6 +51,62 @@ func apiAudiences(issuer string, extra []string) string {
 	return strings.Join(append([]string{issuer}, extra...), ",")
 }
 
+// buildAPIServerArgs appends every caller-supplied "key=value" entry in
+// extraArgs (StartOptions.ExtraAPIServerArgs / "rask create --apiserver-arg",
+// kubeadm's extraArgs shape) to base, rask's own required kube-apiserver
+// flags, and returns the combined argument list.
+//
+// A key that names one of the flags already in base is rejected with a
+// clear error instead of silently letting a later occurrence win. That is
+// the opposite of kubeadm's own extraArgs (which happily lets a caller
+// override anything kubeadm generates): every flag in base is load-bearing
+// for rask's own boot DAG in a way that depends on its *exact* resolved
+// value — the readiness probe URL is built from the same secure-port
+// constant passed via --secure-port, TLS trust throughout Boot assumes
+// --tls-cert-file/--client-ca-file are what was actually passed, and
+// --anonymous-auth=false/--authorization-mode=Node,RBAC are security
+// invariants, not defaults meant to be tweakable. Silently losing one of
+// them to a later "--flag=value wins" apiserver flag-parsing rule would
+// either break boot in a confusing way or silently regress a security
+// posture; kubeadm has no equivalent downstream code depending on its own
+// generated flags' exact values, so it can afford to allow it.
+func buildAPIServerArgs(base, extraArgs []string) ([]string, error) {
+	managed := make(map[string]bool, len(base))
+	for _, a := range base {
+		managed[apiServerArgKey(a)] = true
+	}
+
+	args := append([]string{}, base...)
+
+	for _, e := range extraArgs {
+		key, value, ok := strings.Cut(e, "=")
+		if !ok {
+			return nil, fmt.Errorf("bootstrap: invalid --apiserver-arg %q: must be key=value", e)
+		}
+
+		key = strings.TrimPrefix(key, "--")
+		if managed[key] {
+			return nil, fmt.Errorf("bootstrap: --apiserver-arg %q: %q is a rask-managed flag and cannot be overridden (use its dedicated rask flag instead, e.g. --api-audience for api-audiences)", e, key)
+		}
+
+		args = append(args, "--"+key+"="+value)
+	}
+
+	return args, nil
+}
+
+// apiServerArgKey extracts the flag name (without a leading "--" or
+// trailing "=value") from a rendered "--key=value" (or "--key") apiserver
+// argument.
+func apiServerArgKey(arg string) string {
+	key := strings.TrimPrefix(arg, "--")
+	if idx := strings.IndexByte(key, '='); idx >= 0 {
+		key = key[:idx]
+	}
+
+	return key
+}
+
 // writeCNIConfig writes a bridge+host-local+portmap conflist to confDir.
 func writeCNIConfig(confDir string) error {
 	if err := os.MkdirAll(confDir, 0o755); err != nil {
