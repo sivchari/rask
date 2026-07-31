@@ -17,11 +17,9 @@ go.work.sum
 /rask
 /rask-init
 
-# internal/substrate/vz/embedded/rask-init is checked in as a small text
 # placeholder (see that package's doc comment); `make build-rask-init`
 # overwrites it locally with a real ~40MB cross-compiled binary, which
 # should never itself be committed.
-internal/substrate/vz/embedded/rask-init
 /test/benchmark/.raw-durations-*.txt
 /test/benchmark/.incontainer/
 test/benchmark/*.md

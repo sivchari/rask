@@ -1,0 +1,7 @@
+RASK-INIT-PLACEHOLDER
+This is not the real rask-init binary. It exists so that //go:embed (and
+therefore any consumer importing rask as a Go module, whose module cache is
+read-only) can compile the vz package without running `make build-rask-init`
+first. embedded.IsPlaceholder() detects this file at runtime and refuses to
+boot a VM with it. Run `make build` (or `make build-rask-init`) to overwrite
+it with the real cross-compiled binary, and never commit that overwrite.
