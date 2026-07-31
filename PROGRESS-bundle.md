@@ -262,9 +262,9 @@ component downloads" claim.
   linux`, excluded here exactly as it always has been) and
   `golangci-lint run ./...` all clean on the final worktree state.
 
-## Remaining
+## Done
 
-- [ ] `git add`/commit this worktree's changes in this branch
-      (`feat/bundled-build`) — not yet committed as of this checkpoint;
-      the orchestrator merges, per the environment rules for this session.
-- [ ] Final report to the coordinator.
+- [x] Committed to `feat/bundled-build` (commit `6aea621`, 21 files
+      changed). Not pushed — the orchestrator merges, per this session's
+      environment rules.
+- [x] Final report sent to the coordinator.
