@@ -76,7 +76,6 @@ rask create cluster --name dev --wait coredns
 rask get clusters
 rask export kubeconfig --name dev --context-format 'kind-{name}'
 rask load docker-image myapp:dev --name dev
-rask addon install gateway-api --name dev
 rask delete cluster --name dev
 ```
 
@@ -88,7 +87,8 @@ boot latency breakdown.
 setting it to `kind-{name}` lets tools that recognise clusters by context name —
 Tilt, for one — work against rask without configuration.
 
-`addon install` takes `gateway-api` or `snapshot-crds`, installing CRDs only.
+rask deliberately ships no addons: like kind, it gives you a plain cluster and
+you bring your own manifests.
 
 ### Bringing your own components
 
