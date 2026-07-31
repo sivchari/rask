@@ -35,7 +35,6 @@ func newRootCommand(rt substrate.Runtime, homeDir string) *cobra.Command {
 		newDeleteCommand(rt, homeDir),
 		newGetCommand(homeDir),
 		newExportCommand(homeDir),
-		newAddonCommand(homeDir),
 		newLoadCommand(rt, homeDir),
 	)
 
