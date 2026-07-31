@@ -24,3 +24,4 @@ go.work.sum
 internal/substrate/vz/embedded/rask-init
 /test/benchmark/.raw-durations-*.txt
 /test/benchmark/.incontainer/
+test/benchmark/*.md

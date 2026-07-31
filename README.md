@@ -16,12 +16,11 @@ Disposable local Kubernetes clusters that start in about four seconds.
 
 ## Speed
 
-Measured on this project's benchmark harness (`test/benchmark/`), timing
-`rask create cluster --wait=node` end to end:
+Measured end to end with `rask create cluster --wait=node`:
 
 | tool | node Ready | source |
 |---|---|---|
-| **rask** | **4.0s** (p50), 4.3s (p95) | measured, `test/benchmark/RESULTS-linux.md` |
+| **rask** | **4.0s** (p50), 4.3s (p95) | measured (10-run p50) |
 | k3d | 7-16s | published figures |
 | microk8s | ~12.5s | published figures |
 | kind | 19-20s | kind maintainer, kind#845 |

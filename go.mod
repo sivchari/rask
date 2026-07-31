@@ -1,6 +1,6 @@
 module github.com/sivchari/rask
 
-go 1.26
+go 1.26.3
 
 require (
 	github.com/Code-Hex/vz/v3 v3.7.1
