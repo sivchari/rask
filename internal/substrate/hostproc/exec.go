@@ -65,14 +65,14 @@ func (r *Runtime) WriteFile(_ context.Context, name string, path string, data []
 // forwarding; this exists to satisfy substrate.Runtime's interface
 // uniformly across substrates (a future netns-isolated hostproc, or vz's
 // VM, genuinely need it) and works correctly today as a plain TCP relay.
-func (r *Runtime) PortForward(ctx context.Context, name string, localAddr, remoteAddr string) (<-chan error, error) {
+func (r *Runtime) PortForward(ctx context.Context, name string, localAddr, remoteAddr string) (string, <-chan error, error) {
 	if _, err := os.Stat(r.dataDir(name)); err != nil {
-		return nil, fmt.Errorf("hostproc: cluster %q: %w", name, err)
+		return "", nil, fmt.Errorf("hostproc: cluster %q: %w", name, err)
 	}
 
 	listener, err := net.Listen("tcp", localAddr)
 	if err != nil {
-		return nil, fmt.Errorf("hostproc: listening on %s: %w", localAddr, err)
+		return "", nil, fmt.Errorf("hostproc: listening on %s: %w", localAddr, err)
 	}
 
 	errCh := make(chan error, 1)
@@ -111,7 +111,7 @@ func (r *Runtime) PortForward(ctx context.Context, name string, localAddr, remot
 		}
 	}()
 
-	return errCh, nil
+	return listener.Addr().String(), errCh, nil
 }
 
 // relay copies data bidirectionally between conn and a new connection to

@@ -149,7 +149,7 @@ func TestRuntime_ExecWriteFilePortForward_ErrorWhenNotRunning(t *testing.T) {
 		t.Error("WriteFile on a never-started cluster = nil error, want error")
 	}
 
-	if _, err := r.PortForward(ctx, "never-started", "127.0.0.1:0", "127.0.0.1:0"); err == nil {
+	if _, _, err := r.PortForward(ctx, "never-started", "127.0.0.1:0", "127.0.0.1:0"); err == nil {
 		t.Error("PortForward on a never-started cluster = nil error, want error")
 	}
 }

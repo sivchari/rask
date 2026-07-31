@@ -84,8 +84,8 @@ func (f *fakeRuntime) WriteFile(_ context.Context, _ string, _ string, _ []byte)
 	return errors.New("fakeRuntime: WriteFile not implemented")
 }
 
-func (f *fakeRuntime) PortForward(_ context.Context, _ string, _, _ string) (<-chan error, error) {
-	return nil, errors.New("fakeRuntime: PortForward not implemented")
+func (f *fakeRuntime) PortForward(_ context.Context, _ string, _, _ string) (string, <-chan error, error) {
+	return "", nil, errors.New("fakeRuntime: PortForward not implemented")
 }
 
 func (f *fakeRuntime) LoadImages(_ context.Context, name string, images []substrate.ImageSource) error {

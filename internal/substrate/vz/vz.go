@@ -462,12 +462,12 @@ func (r *Runtime) WriteFile(ctx context.Context, name string, path string, data 
 // than v1 needs: no cmd/rask command calls PortForward today (see
 // substrate.Runtime's doc comment), so this returns a clear error instead
 // of a half-working implementation.
-func (r *Runtime) PortForward(_ context.Context, name string, _, _ string) (<-chan error, error) {
+func (r *Runtime) PortForward(_ context.Context, name string, _, _ string) (string, <-chan error, error) {
 	if _, ok := r.readPID(name); !ok {
-		return nil, fmt.Errorf("vz: cluster %q is not running", name)
+		return "", nil, fmt.Errorf("vz: cluster %q is not running", name)
 	}
 
-	return nil, errors.New("vz: PortForward is not implemented yet for the vz substrate; see PortForward's doc comment")
+	return "", nil, errors.New("vz: PortForward is not implemented yet for the vz substrate; see PortForward's doc comment")
 }
 
 func (r *Runtime) agentClientFor(name string) (*agentClient, error) {

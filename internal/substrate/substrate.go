@@ -201,9 +201,12 @@ type Runtime interface {
 	WriteFile(ctx context.Context, name string, path string, data []byte) error
 
 	// PortForward forwards localAddr on the host to remoteAddr inside
+	// the cluster. localAddr may use port 0 to let the OS pick a free
+	// port; the actually-bound address is returned so callers never need
+	// the racy reserve-close-rebind pattern.
 	// the cluster instance until ctx is canceled or the returned error
 	// channel is read from.
-	PortForward(ctx context.Context, name string, localAddr, remoteAddr string) (<-chan error, error)
+	PortForward(ctx context.Context, name string, localAddr, remoteAddr string) (boundAddr string, errs <-chan error, err error)
 
 	// LoadImages imports each of images into the cluster instance's image
 	// store, so a pod can reference them with imagePullPolicy: Never

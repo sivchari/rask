@@ -123,21 +123,10 @@ func TestRuntime_PortForwardRelaysData(t *testing.T) {
 		_, _ = conn.Write(buf[:n])
 	}()
 
-	local, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("reserving local addr: %v", err)
-	}
-
-	localAddr := local.Addr().String()
-
-	if err := local.Close(); err != nil {
-		t.Fatalf("closing reserved listener: %v", err)
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	errCh, err := r.PortForward(ctx, "dev", localAddr, upstream.Addr().String())
+	localAddr, errCh, err := r.PortForward(ctx, "dev", "127.0.0.1:0", upstream.Addr().String())
 	if err != nil {
 		t.Fatalf("PortForward: %v", err)
 	}
