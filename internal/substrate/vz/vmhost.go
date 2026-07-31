@@ -63,7 +63,7 @@ func RunVMHost(ctx context.Context, homeDir, name string) error {
 	}
 	defer func() { _ = logFile.Close() }()
 
-	cache := components.NewCache(filepath.Join(homeDir, "cache"))
+	cache := components.DefaultCache(filepath.Join(homeDir, "cache"))
 
 	kernel, err := cache.EnsureGuestKernel(ctx)
 	if err != nil {

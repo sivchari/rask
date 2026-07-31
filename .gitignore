@@ -23,3 +23,12 @@ go.work.sum
 /test/benchmark/.raw-durations-*.txt
 /test/benchmark/.incontainer/
 test/benchmark/*.md
+
+# `make bundle-payload` (cmd/bundle-payload) stages the real payload here —
+# potentially gigabytes of downloaded component binaries plus manifest.json
+# — never committed, exactly like /rask-init above (see
+# internal/components/bundlepayload's package doc). Only .gitkeep (keeping
+# the directory present so a fresh checkout has somewhere to stage into) is
+# tracked.
+/internal/components/bundlepayload/payload/*
+!/internal/components/bundlepayload/payload/.gitkeep

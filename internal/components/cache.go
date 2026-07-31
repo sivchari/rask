@@ -27,6 +27,15 @@ func NewCache(dir string) *Cache {
 	return &Cache{dir: dir, client: http.DefaultClient}
 }
 
+// NewCacheWithTransport returns a Cache rooted at dir whose HTTP client
+// uses rt instead of http.DefaultTransport. Used by DefaultCache (see
+// defaultcache.go) to serve fetch/verify's requests from an embedded
+// payload instead of the network, without changing anything else about
+// Cache's download/verify/extract logic.
+func NewCacheWithTransport(dir string, rt http.RoundTripper) *Cache {
+	return &Cache{dir: dir, client: &http.Client{Transport: rt}}
+}
+
 // Dir returns the root directory this Cache is scoped to, for callers that
 // need to place their own cache entries alongside the component-scoped
 // subdirectories Ensure/EnsureGuestKernel/etc. create (e.g.

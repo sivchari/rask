@@ -163,7 +163,7 @@ func (r *Runtime) imageCacheDir() string {
 // (internal/components.LocalDirSource) if set, else the default download
 // cache (internal/components.DownloadCacheSource).
 func (r *Runtime) componentSource(opts substrate.StartOptions) components.ComponentSource {
-	cache := components.NewCache(r.cacheDir())
+	cache := components.DefaultCache(r.cacheDir())
 
 	if opts.ComponentDir != "" {
 		return components.NewLocalDirSource(opts.ComponentDir, cache)

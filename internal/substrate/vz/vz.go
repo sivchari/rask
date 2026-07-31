@@ -109,7 +109,7 @@ func (r *Runtime) Create(ctx context.Context, name string, opts substrate.StartO
 		return errors.New("vz: --component-dir is not supported by the vz substrate yet (see Start's doc comment); the shared template initramfs every vz cluster boots from is built once per host, not per cluster, so a per-cluster component override needs a per-cluster initramfs — not yet implemented")
 	}
 
-	cache := components.NewCache(filepath.Join(r.homeDir, "cache"))
+	cache := components.DefaultCache(filepath.Join(r.homeDir, "cache"))
 
 	if _, err := buildTemplateInitramfs(ctx, cache); err != nil {
 		return fmt.Errorf("vz: preparing template initramfs: %w", err)
