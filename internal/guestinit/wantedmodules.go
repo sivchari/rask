@@ -21,15 +21,45 @@ package guestinit
 //     (its filesystem).
 //   - bridge CNI: bridge, veth, br_netfilter (bridge CNI plugin +
 //     containerd's CNI wiring).
-//   - netfilter/iptables: everything kube-proxy's iptables mode needs
-//     (ip(6)_tables and the iptable_*/xt_*/nf_* modules its rendered
-//     iptables-restore rule set exercises). Bundling this whole family
-//     rather than hand-picking the minimal subset is a deliberate
-//     simplification (each module is a few KB; the safety margin against a
-//     kube-proxy CrashLoop from one missing xt_* match extension is worth
-//     more than the bytes saved) — see plan-m0-spikes.md's networking
-//     section ("if an entire iptables module family is missing... prefer
-//     fixing modules").
+//   - netfilter/iptables (legacy API): everything kube-proxy's iptables
+//     mode needs (ip(6)_tables and the iptable_*/xt_*/nf_* modules its
+//     rendered iptables-restore rule set exercises).
+//   - netfilter/nftables (nf_tables API): the bundled iptables binary
+//     (internal/components/iptables.go) is Alpine's xtables-nft-multi —
+//     the nft-BACKED implementation of the iptables command line, not the
+//     legacy ip_tables/x_tables-only one — so it needs the nf_tables
+//     kernel subsystem itself, not just the legacy modules above. Missing
+//     this entirely (only the legacy family was bundled at first) is what
+//     caused kube-proxy's own iptables detection
+//     (k8s.io/kubernetes/pkg/util/iptables's Present(), which checks for
+//     the nat table's POSTROUTING chain) to fail with "iptables is not
+//     available on this host" — found live.
+//     Bundling both whole families rather than hand-picking the minimal
+//     subset is a deliberate simplification (each module is a few KB; the
+//     safety margin against a kube-proxy CrashLoop from one missing
+//     extension is worth more than the bytes saved) — see
+//     plan-m0-spikes.md's networking section ("if an entire iptables
+//     module family is missing... prefer fixing modules").
+//   - REJECT target support (nf_reject_ipv4/ipv6, ipt_REJECT/ip6t_REJECT,
+//     nft_reject and its ipv4/ipv6/inet variants): kube-proxy's iptables
+//     mode always programs a REJECT rule in KUBE-SERVICES for services with
+//     no endpoints, in both the IPv4 and IPv6 chains regardless of whether
+//     dual-stack is actually in use — without these modules,
+//     iptables-restore fails outright on every sync attempt with
+//     "Extension REJECT revision 0 not supported, missing kernel module?"
+//     and "RULE_APPEND failed (No such file or directory): rule in chain
+//     KUBE-SERVICES", so *no* Service (not just the ones that would
+//     legitimately hit REJECT) ever gets routed — found live: this is what
+//     kept CoreDNS's "kubernetes" plugin from ever reaching the apiserver
+//     through its ClusterIP, well after the earlier "Couldn't load match
+//     `mark'" case-collision bug (see internal/components/iptables.go's
+//     CaseCollisionManifest) was already fixed and confirmed gone from
+//     kube-proxy's log. ipt_REJECT/ip6t_REJECT are the legacy xtables
+//     kernel modules nft_compat's translation of "-j REJECT" depends on
+//     (this iptables binary is nft-backed, see the nftables paragraph
+//     below); the nft_reject family is bundled alongside them since both
+//     paths are cheap and untangling which one nft_compat actually
+//     exercises isn't worth the fragility.
 //   - crc32c_generic: registers the "crc32c" crypto API shash algorithm
 //     that lib/libcrc32c.ko's crc32c() and nf_conntrack's init both look
 //     up via crypto_alloc_shash("crc32c", ...). modules.dep doesn't record
@@ -56,4 +86,10 @@ var WantedModules = []string{
 	"x_tables", "xt_addrtype", "xt_comment", "xt_mark", "xt_multiport",
 	"xt_nat", "xt_recent", "xt_statistic", "xt_tcpudp", "xt_conntrack",
 	"xt_MASQUERADE", "xt_CT",
+
+	"nf_reject_ipv4", "nf_reject_ipv6", "ipt_REJECT", "ip6t_REJECT",
+
+	"nfnetlink", "nf_tables", "nft_compat", "nft_chain_nat", "nft_nat",
+	"nft_masq", "nft_redir", "nft_ct",
+	"nft_reject", "nft_reject_inet", "nft_reject_ipv4", "nft_reject_ipv6",
 }

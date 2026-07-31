@@ -53,8 +53,12 @@ const (
 	PathExec = "/exec"
 
 	// PathFile accepts a PUT whose query parameter "path" (see
-	// EncodeFilePath/DecodeFilePath) names the destination and whose
-	// body is the raw file content.
+	// EncodeFilePath/DecodeFilePath) names the destination and whose body
+	// is the raw file content, or a GET with the same "path" parameter to
+	// read a file back (e.g. a component's log file under
+	// guestlayout.GuestAgentDataDir/logs, otherwise unreachable from the
+	// host — there is no shell in this guest to cat/tail anything, and no
+	// shared filesystem the way internal/substrate/hostproc has).
 	PathFile = "/file"
 )
 

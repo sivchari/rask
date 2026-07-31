@@ -9,7 +9,17 @@ import (
 
 	"github.com/vishvananda/netlink"
 
+	"github.com/sivchari/rask/internal/cluster"
 	"github.com/sivchari/rask/internal/guestagent"
+)
+
+// resolvConfPath and hostsPath are Linux's fixed, hardcoded lookup paths;
+// programs that need them (containerd's CRI sandbox setup among them, see
+// configureNetwork's doc comment) always read exactly these paths, never
+// look them up through a config value.
+const (
+	resolvConfPath = "/etc/resolv.conf"
+	hostsPath      = "/etc/hosts"
 )
 
 // Static network configuration matching the gvisor-tap-vsock subnet
@@ -66,8 +76,21 @@ func configureNetwork() error {
 	}
 
 	resolvConf := fmt.Sprintf("nameserver %s\n", gatewayIP)
-	if err := os.WriteFile("/etc/resolv.conf", []byte(resolvConf), 0o644); err != nil {
+	if err := os.WriteFile(resolvConfPath, []byte(resolvConf), 0o644); err != nil {
 		return fmt.Errorf("write resolv.conf: %w", err)
+	}
+
+	// containerd's CRI sandbox setup copies the host's own /etc/hosts into
+	// every pod sandbox as a starting point (internal/cri/server/podsandbox
+	// .setupSandboxFiles -> c.os.CopyFile(etcHosts, sandboxEtcHosts, ...) in
+	// containerd v2.3.3) — it does not create one if missing, it only
+	// copies. Without this file, every pod sandbox creation fails outright
+	// ("failed to generate sandbox hosts file ...: open /etc/hosts: no such
+	// file or directory"), which is what blocked CoreDNS/local-path-
+	// provisioner from ever leaving ContainerCreating in earlier attempts.
+	hosts := fmt.Sprintf("127.0.0.1 localhost\n::1 localhost\n%s %s\n", guestIP, cluster.NodeName)
+	if err := os.WriteFile(hostsPath, []byte(hosts), 0o644); err != nil {
+		return fmt.Errorf("write hosts: %w", err)
 	}
 
 	return nil

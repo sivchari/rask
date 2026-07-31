@@ -24,11 +24,23 @@ type fakeRuntime struct {
 	// to its own post-Start steps.
 	onStart func(name string) error
 
-	createCalls    []string
-	startCalls     []string
-	startOptsCalls []substrate.StartOptions
-	stopCalls      []string
-	deleteCalls    []string
+	loadImagesErr error
+
+	createCalls     []string
+	startCalls      []string
+	startOptsCalls  []substrate.StartOptions
+	stopCalls       []string
+	deleteCalls     []string
+	loadImagesCalls []loadImagesCall
+}
+
+// loadImagesCall records one LoadImages invocation: the cluster name and
+// the Reference of every substrate.ImageSource passed in (Stream is
+// intentionally omitted — tests assert on which images were requested, not
+// on stream identity/content).
+type loadImagesCall struct {
+	name       string
+	references []string
 }
 
 func (f *fakeRuntime) Create(_ context.Context, name string) error {
@@ -72,4 +84,15 @@ func (f *fakeRuntime) WriteFile(_ context.Context, _ string, _ string, _ []byte)
 
 func (f *fakeRuntime) PortForward(_ context.Context, _ string, _, _ string) (<-chan error, error) {
 	return nil, errors.New("fakeRuntime: PortForward not implemented")
+}
+
+func (f *fakeRuntime) LoadImages(_ context.Context, name string, images []substrate.ImageSource) error {
+	references := make([]string, len(images))
+	for i, img := range images {
+		references[i] = img.Reference
+	}
+
+	f.loadImagesCalls = append(f.loadImagesCalls, loadImagesCall{name: name, references: references})
+
+	return f.loadImagesErr
 }

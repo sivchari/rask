@@ -90,6 +90,56 @@ func TestAgentClient_WaitHealthy_TimesOut(t *testing.T) {
 	}
 }
 
+func TestAgentClient_ReadFile(t *testing.T) {
+	t.Parallel()
+
+	want := []byte("kube-apiserver log content\n")
+
+	mux := http.NewServeMux()
+	mux.HandleFunc(guestagent.PathFile, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %s, want GET", r.Method)
+		}
+
+		path, err := guestagent.DecodeFilePath(r.URL.Query().Get("path"))
+		if err != nil {
+			t.Errorf("DecodeFilePath: %v", err)
+		}
+
+		if path != "/var/lib/rask/logs/kube-apiserver.log" {
+			t.Errorf("path = %q, want %q", path, "/var/lib/rask/logs/kube-apiserver.log")
+		}
+
+		_, _ = w.Write(want)
+	})
+
+	c := newTestAgentClient(t, mux)
+
+	got, err := c.ReadFile(context.Background(), "/var/lib/rask/logs/kube-apiserver.log")
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+
+	if string(got) != string(want) {
+		t.Errorf("ReadFile = %q, want %q", got, want)
+	}
+}
+
+func TestAgentClient_ReadFile_NotFound(t *testing.T) {
+	t.Parallel()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc(guestagent.PathFile, func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "no such file", http.StatusNotFound)
+	})
+
+	c := newTestAgentClient(t, mux)
+
+	if _, err := c.ReadFile(context.Background(), "/does/not/exist"); err == nil {
+		t.Fatal("ReadFile for a missing path = nil error, want error")
+	}
+}
+
 func TestAgentClient_Kubeconfig(t *testing.T) {
 	t.Parallel()
 

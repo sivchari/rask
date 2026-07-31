@@ -117,10 +117,15 @@ func (r *Runtime) Create(ctx context.Context, name string) error {
 // captured directly in this closure (not re-read from the pidfile) so
 // cleanup still finds and terminates the process even if the pidfile write
 // itself is what failed.
-// opts is currently unused: extra API audiences are threaded through the
-// hostproc substrate (see internal/substrate/hostproc.Runtime.Start); vz's
-// guest-side boot path does not yet plumb Config.ExtraAPIAudiences through
-// to the in-guest bootstrap.Boot call.
+// opts is currently unused: extra API audiences and prebaked-seed selection
+// are threaded through the hostproc substrate (see
+// internal/substrate/hostproc.Runtime.Start); vz's guest-side boot path does
+// not yet plumb Config.ExtraAPIAudiences or Config.SeedPath through to the
+// in-guest bootstrap.Boot call, and internal/prebake's seed-build path
+// (which extracts a seed's source file from a stopped cluster's host
+// filesystem) has no vz equivalent yet either, since a vz cluster's
+// datastore lives inside the guest VM's own disk, not on a host-readable
+// path.
 func (r *Runtime) Start(ctx context.Context, name string, _ substrate.StartOptions) (err error) {
 	clusterDir := cluster.Dir(r.homeDir, name)
 	if err := os.MkdirAll(clusterDir, 0o755); err != nil {
@@ -132,7 +137,13 @@ func (r *Runtime) Start(ctx context.Context, name string, _ substrate.StartOptio
 	defer func() {
 		if err != nil {
 			if pid > 0 {
-				terminateVMHost(context.Background(), pid, vmHostGracePeriod)
+				if termErr := terminateVMHost(context.Background(), pid, vmHostGracePeriod); termErr != nil {
+					// Best-effort cleanup during an already-failing
+					// Start: nothing left to do but make the failure
+					// visible rather than silently leaving the
+					// vm-host process (and its VM) running unowned.
+					fmt.Fprintf(os.Stderr, "vz: cleaning up after failed Start: %v\n", termErr)
+				}
 			}
 
 			_ = os.RemoveAll(clusterDir)
@@ -203,6 +214,21 @@ func (r *Runtime) spawnVMHost(name string) (pid int, err error) {
 		return 0, fmt.Errorf("vz: starting vm-host process: %w", err)
 	}
 
+	// Capture the pid before Release(): os.Process.Release's doc comment
+	// says outright that, "for historical reasons, on systems other than
+	// Windows, Release sets the Pid field to -1" — reading cmd.Process.Pid
+	// after Release() therefore always returns -1, which every caller of
+	// spawnVMHost writes straight into the cluster's pidfile. readPID's
+	// pid<=0 guard silently swallows that instead of erroring, so Stop/
+	// Delete believe there is nothing to terminate and no-op successfully
+	// while the real vm-host process (and its VM) keeps running, unowned.
+	// Found live during this session: every vm-host process this session
+	// had a "-1" (or otherwise wrong) pidfile from the moment it started,
+	// and every prior "successful" rask delete on a vz cluster was actually
+	// a no-op that happened to look fine only because the orphaned process
+	// was separately killed by hand each time.
+	pid = cmd.Process.Pid
+
 	// The child is now detached; releasing it here (rather than holding
 	// onto *exec.Cmd and calling Wait) avoids leaving a zombie once this
 	// short-lived CLI process exits, since nothing in this process will
@@ -211,7 +237,7 @@ func (r *Runtime) spawnVMHost(name string) (pid int, err error) {
 		return 0, fmt.Errorf("vz: releasing vm-host process: %w", err)
 	}
 
-	return cmd.Process.Pid, nil
+	return pid, nil
 }
 
 // waitForVMState polls for vmhost.go's state file to appear (written as
@@ -291,17 +317,27 @@ func (r *Runtime) fetchTimeline(ctx context.Context, client *agentClient, name s
 
 // Stop terminates the cluster's vm-host process (SIGTERM, which unblocks
 // RunVMHost's ctx.Done() case and tears the VM down cleanly; SIGKILL if it
-// doesn't exit within a grace period) and removes the PID/state files
-// Delete's "still running" check and Start's next run key off of. A no-op
-// if the cluster isn't running (mirrors
-// internal/substrate/hostproc.Stop's idempotency contract).
+// doesn't exit within a grace period) and, only once that's actually
+// confirmed, removes the PID/state files Delete's "still running" check
+// and Start's next run key off of. A no-op if the cluster isn't running
+// (mirrors internal/substrate/hostproc.Stop's idempotency contract).
+//
+// If the process cannot be confirmed dead, Stop returns an error and
+// leaves the pidfile in place — it must NOT report success while the
+// process (and the VM it owns) might still be running. A previous version
+// removed the pidfile unconditionally regardless of whether termination
+// actually succeeded, which let a subsequent Delete see "not running" and
+// remove the cluster's state directory while the real vm-host process (and
+// its VM) kept running, unowned — found live during this session.
 func (r *Runtime) Stop(ctx context.Context, name string) error {
 	pid, ok := r.readPID(name)
 	if !ok {
 		return nil
 	}
 
-	terminateVMHost(ctx, pid, vmHostGracePeriod)
+	if err := terminateVMHost(ctx, pid, vmHostGracePeriod); err != nil {
+		return fmt.Errorf("vz: stopping cluster %q: %w", name, err)
+	}
 
 	_ = os.Remove(r.pidPath(name))
 	_ = os.Remove(vmStatePath(r.homeDir, name))

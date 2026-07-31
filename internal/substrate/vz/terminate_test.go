@@ -72,7 +72,9 @@ func TestTerminateVMHost_SIGTERMStopsAResponsiveProcess(t *testing.T) {
 
 	pid := spawnSleepProcess(t, 60)
 
-	terminateVMHost(context.Background(), pid, 5*time.Second)
+	if err := terminateVMHost(context.Background(), pid, 5*time.Second); err != nil {
+		t.Errorf("terminateVMHost: %v", err)
+	}
 
 	requireDeadEventually(t, pid, 2*time.Second)
 }
@@ -88,8 +90,11 @@ func TestTerminateVMHost_NoopWhenAlreadyDead(t *testing.T) {
 
 	requireDeadEventually(t, pid, 2*time.Second)
 
-	// Must not panic or hang when the pid is already gone.
-	terminateVMHost(context.Background(), pid, 5*time.Second)
+	// Must not panic or hang when the pid is already gone, and must
+	// report success (there's nothing left to terminate).
+	if err := terminateVMHost(context.Background(), pid, 5*time.Second); err != nil {
+		t.Errorf("terminateVMHost on an already-dead pid: %v", err)
+	}
 }
 
 func TestTerminateVMHost_EscalatesToSIGKILLOnCtxCancellation(t *testing.T) {
@@ -104,8 +109,12 @@ func TestTerminateVMHost_EscalatesToSIGKILLOnCtxCancellation(t *testing.T) {
 	cancel()
 
 	start := time.Now()
-	terminateVMHost(ctx, pid, 30*time.Second)
+	err := terminateVMHost(ctx, pid, 30*time.Second)
 	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Errorf("terminateVMHost: %v", err)
+	}
 
 	requireDeadEventually(t, pid, 2*time.Second)
 

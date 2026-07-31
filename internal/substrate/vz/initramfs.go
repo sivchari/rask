@@ -23,7 +23,7 @@ import (
 // file at cacheDir/vz-initramfs-template-<version>.cpio is otherwise reused
 // forever, so a version that silently went stale would boot a stale guest
 // without any error.
-const templateInitramfsVersion = "v5"
+const templateInitramfsVersion = "v12"
 
 // buildTemplateInitramfs builds (or returns the cached path to) the
 // initramfs shared by every rask cluster on this host: rask-init as /init,
@@ -86,6 +86,11 @@ func buildTemplateInitramfs(ctx context.Context, cache *components.Cache) (strin
 		return "", fmt.Errorf("vz: resolving gcompat bundle: %w", err)
 	}
 
+	busybox, err := cache.EnsureBusyboxBundle(ctx)
+	if err != nil {
+		return "", fmt.Errorf("vz: resolving busybox bundle: %w", err)
+	}
+
 	w := newCpioWriter()
 
 	if err := w.WriteFile("init", 0o755, embedded.RaskInitBinary); err != nil {
@@ -110,6 +115,10 @@ func buildTemplateInitramfs(ctx context.Context, cache *components.Cache) (strin
 
 	if err := copyLocalTree(w, "", gcompat.Dir); err != nil {
 		return "", fmt.Errorf("vz: adding gcompat bundle: %w", err)
+	}
+
+	if err := copyLocalTree(w, "", busybox.Dir); err != nil {
+		return "", fmt.Errorf("vz: adding busybox bundle: %w", err)
 	}
 
 	caBundle, err := os.ReadFile(caBundlePath)
@@ -236,10 +245,26 @@ func copyLocalFile(w *cpioWriter, guestPath, srcPath string) error {
 // path>. Writing the exact same path twice (e.g. the iptables and
 // e2fsprogs bundles both shipping the same pinned musl shared library) is
 // a no-op on the second write, not an error — see cpioWriter.WriteFile.
+//
+// If srcDir contains components.CaseCollisionManifest (written by
+// extractTarGzPreserveSymlinks when a package ships two entries whose paths
+// differ only by case — see that constant's doc comment for why this host's
+// case-insensitive filesystem can't hold both directly), the disambiguated
+// on-disk entries it lists are restored to their correct, case-sensitive
+// guest paths instead of their on-disk ones.
 func copyLocalTree(w *cpioWriter, guestPrefix, srcDir string) error {
+	renames, manifestPath, err := loadCaseCollisionManifest(srcDir)
+	if err != nil {
+		return err
+	}
+
 	return filepath.WalkDir(srcDir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+
+		if p == manifestPath {
+			return nil
 		}
 
 		rel, err := filepath.Rel(srcDir, p)
@@ -251,7 +276,12 @@ func copyLocalTree(w *cpioWriter, guestPrefix, srcDir string) error {
 			return nil
 		}
 
-		guestPath := path.Join(guestPrefix, filepath.ToSlash(rel))
+		relSlash := filepath.ToSlash(rel)
+		if real, ok := renames[relSlash]; ok {
+			relSlash = real
+		}
+
+		guestPath := path.Join(guestPrefix, relSlash)
 
 		switch {
 		case d.Type()&fs.ModeSymlink != 0:
@@ -281,4 +311,39 @@ func copyLocalTree(w *cpioWriter, guestPrefix, srcDir string) error {
 			return w.WriteFile(guestPath, uint32(info.Mode().Perm()), data)
 		}
 	})
+}
+
+// loadCaseCollisionManifest reads srcDir/components.CaseCollisionManifest,
+// if present, into a map from a colliding entry's disambiguated on-disk
+// relative path (slash-separated) to its correct guest relative path. It
+// also returns the manifest file's own absolute path so copyLocalTree's
+// walk can skip copying the bookkeeping file itself into the guest.
+func loadCaseCollisionManifest(srcDir string) (map[string]string, string, error) {
+	manifestPath := filepath.Join(srcDir, components.CaseCollisionManifest)
+
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, manifestPath, nil
+		}
+
+		return nil, manifestPath, fmt.Errorf("reading %s: %w", manifestPath, err)
+	}
+
+	renames := map[string]string{}
+
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line == "" {
+			continue
+		}
+
+		fields := strings.SplitN(line, "\t", 2)
+		if len(fields) != 2 {
+			return nil, manifestPath, fmt.Errorf("malformed case-collision manifest line %q in %s", line, manifestPath)
+		}
+
+		renames[fields[0]] = fields[1]
+	}
+
+	return renames, manifestPath, nil
 }

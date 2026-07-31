@@ -160,3 +160,40 @@ func (c *agentClient) WriteFile(ctx context.Context, path string, data []byte) e
 
 	return nil
 }
+
+// ReadFile reads path back out of the guest — the only way to inspect a
+// file (e.g. a component's log under guestlayout.GuestAgentDataDir/logs)
+// there is no shell in the guest to cat/tail, and the data disk isn't
+// shared with the host.
+func (c *agentClient) ReadFile(ctx context.Context, path string) ([]byte, error) {
+	u, err := url.Parse(c.baseURL + guestagent.PathFile)
+	if err != nil {
+		return nil, err
+	}
+
+	q := u.Query()
+	q.Set("path", guestagent.EncodeFilePath(path))
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("vz: GET %s: %w", guestagent.PathFile, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("vz: reading response body for %s: %w", path, err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("vz: reading %s: status %s: %s", path, resp.Status, data)
+	}
+
+	return data, nil
+}

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"golang.org/x/sync/errgroup"
 	"k8s.io/client-go/tools/clientcmd"
@@ -17,13 +16,6 @@ import (
 	"github.com/sivchari/rask/internal/manifests"
 	"github.com/sivchari/rask/internal/store/kine"
 )
-
-// bootTimeout bounds runBoot: a component that never becomes healthy would
-// otherwise leave PID 1 blocked forever (internal/bootstrap.Boot's readiness
-// polling has no built-in deadline of its own — see runBoot's ctx). Chosen
-// generously above what a healthy boot needs, so this only ever fires on a
-// genuine stuck-component failure, not a slow-but-working one.
-const bootTimeout = 3 * time.Minute
 
 // runBoot brings up the cluster's control plane and node inside this guest,
 // reusing internal/bootstrap.Boot unchanged — the same DAG
@@ -38,10 +30,31 @@ const bootTimeout = 3 * time.Minute
 // (internal/manifests), mirroring internal/substrate/hostproc.applyManifests:
 // bootstrap.Boot itself only brings up the control plane and node, not
 // cluster addons.
+//
+// ctx is passed straight through to bootstrap.Boot as its launchCtx —
+// deliberately NOT wrapped in a context.WithTimeout here, even though an
+// unbounded boot would otherwise leave PID 1 blocked forever if a
+// component never becomes healthy. bootstrap.Boot's own doc comment is
+// explicit about why: every long-running process it launches
+// (kube-apiserver included) is tied to launchCtx via exec.CommandContext,
+// so canceling it — including via a deferred cancel() that fires the
+// moment this function RETURNS SUCCESSFULLY — kills every one of them
+// instantly. This is not hypothetical: an earlier version of this function
+// did exactly that (wrapped ctx in a 3-minute timeout with `defer
+// cancel()`), and it silently SIGKILLed the entire control plane
+// (kube-apiserver's own log just stopped mid-line, no shutdown message)
+// the instant boot succeeded — found live, the exact bug class already
+// documented in test/benchmark/PROGRESS.md's hostproc incident
+// ("errgroup.WithContext's derived context is canceled the first time
+// Wait returns, INCLUDING a successful return"), reintroduced here via a
+// different mechanism (a bare context.WithTimeout instead of an
+// errgroup-derived context) with the identical effect. Bounding overall
+// boot time is instead the host-side boot watchdog's job
+// (internal/substrate/vz/watchdog.go's runBootWatchdog, which polls this
+// guest's own HTTP healthz from outside and stops the VM if it never
+// answers — it never touches this guest's internal process-lifetime
+// context at all, so it can't have this failure mode).
 func runBoot(ctx context.Context, clusterName string) (*bootstrap.Result, error) {
-	ctx, cancel := context.WithTimeout(ctx, bootTimeout)
-	defer cancel()
-
 	dataDir := guestlayout.GuestAgentDataDir
 	paths := guestlayout.Paths()
 

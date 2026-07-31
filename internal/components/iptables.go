@@ -101,6 +101,31 @@ func (c *Cache) EnsureIPTablesBundle(ctx context.Context) (*IPTablesBundle, erro
 	return &IPTablesBundle{Dir: dir}, nil
 }
 
+// CaseCollisionManifest is a small sidecar file extractTarGzPreserveSymlinks
+// writes into destDir whenever a package contains two regular file entries
+// whose paths differ only by case — e.g. Alpine's iptables package
+// legitimately ships both usr/lib/xtables/libxt_MARK.so (the "MARK" jump
+// target) and usr/lib/xtables/libxt_mark.so (the "mark" match) as distinct
+// extension modules.
+//
+// macOS's default APFS volume is case-insensitive but case-preserving: the
+// second entry doesn't create a second directory entry, it silently
+// overwrites the *content* of the first one under the first one's name.
+// `ls` still shows a plausible-looking file, so this is easy to miss.
+// Found live: this broke kube-proxy's iptables-restore with "Couldn't load
+// match `mark': No such file or directory" — libxt_mark.so's directory
+// entry never existed at all on this Mac's cache volume, only
+// libxt_MARK.so did (holding whichever of the two files extracted last).
+//
+// Each colliding entry after the first is instead written under a
+// disambiguated, collision-proof on-disk name, and a "diskRelPath\treal
+// RelPath\n" line recording its true path is appended to this manifest so
+// copyLocalTree (internal/substrate/vz/initramfs.go) can restore the
+// correct, case-sensitive path when building the guest's cpio archive
+// (which, being a byte format this program controls end to end rather than
+// a real host directory, has no such case-insensitivity problem).
+const CaseCollisionManifest = ".rask-case-collisions.tsv"
+
 // extractTarGzPreserveSymlinks extracts a gzip-compressed tar archive into
 // destDir like extractTarGz, but additionally recreates symlink entries
 // (extractTarGz silently skips them: none of rask's other pinned releases
@@ -119,6 +144,7 @@ func extractTarGzPreserveSymlinks(data []byte, destDir string) error {
 	}
 
 	tr := tar.NewReader(gz)
+	seenLower := map[string]string{} // lowercase rel path -> first-seen exact rel path, this call only
 
 	for {
 		hdr, err := tr.Next()
@@ -141,6 +167,24 @@ func extractTarGzPreserveSymlinks(data []byte, destDir string) error {
 				return err
 			}
 		case tar.TypeReg:
+			relPath := filepath.ToSlash(filepath.Clean(hdr.Name))
+			lowerKey := strings.ToLower(relPath)
+
+			if firstSeen, collides := seenLower[lowerKey]; collides && firstSeen != relPath {
+				if err := recordCaseCollision(destDir, relPath); err != nil {
+					return err
+				}
+
+				disambiguated := target + ".rask-case-" + caseCollisionSuffix(relPath)
+				if err := extractFile(tr, disambiguated, hdr.FileInfo().Mode()); err != nil {
+					return err
+				}
+
+				continue
+			}
+
+			seenLower[lowerKey] = relPath
+
 			if err := extractFile(tr, target, hdr.FileInfo().Mode()); err != nil {
 				return err
 			}
@@ -153,6 +197,35 @@ func extractTarGzPreserveSymlinks(data []byte, destDir string) error {
 			// nodes, hardlinks, etc.); skip rather than fail.
 		}
 	}
+}
+
+// caseCollisionSuffix derives a short, deterministic, filesystem-safe
+// disambiguator for relPath's on-disk name from its own sha256 — any fixed
+// function of the correct path works here, since the only requirement is
+// that colliding entries land on genuinely distinct on-disk paths.
+func caseCollisionSuffix(relPath string) string {
+	sum := sha256.Sum256([]byte(relPath))
+
+	return hex.EncodeToString(sum[:4])
+}
+
+// recordCaseCollision appends a "diskRelPath\trealRelPath\n" line to
+// destDir/CaseCollisionManifest recording where realPath's content actually
+// landed on disk, so copyLocalTree can restore it to the correct guest path.
+func recordCaseCollision(destDir, realPath string) error {
+	diskRelPath := realPath + ".rask-case-" + caseCollisionSuffix(realPath)
+
+	f, err := os.OpenFile(filepath.Join(destDir, CaseCollisionManifest), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("components: opening case-collision manifest: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	if _, err := fmt.Fprintf(f, "%s\t%s\n", diskRelPath, realPath); err != nil {
+		return fmt.Errorf("components: writing case-collision manifest: %w", err)
+	}
+
+	return nil
 }
 
 // extractSymlink recreates a symlink at target pointing at linkname

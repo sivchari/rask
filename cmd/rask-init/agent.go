@@ -142,16 +142,13 @@ func exitCodeFromError(err error) int {
 	return -1
 }
 
-// handleFile writes the request body to the path named by the "path" query
-// parameter (guestagent.EncodeFilePath), creating parent directories as
-// needed — the guest-side counterpart of substrate.Runtime.WriteFile.
+// handleFile writes the request body to (PUT) or returns the contents of
+// (GET) the path named by the "path" query parameter
+// (guestagent.EncodeFilePath) — the guest-side counterpart of
+// substrate.Runtime.WriteFile, and (for GET) the only way to read a file
+// out of this guest at all: there is no shell to cat/tail anything, and no
+// filesystem shared with the host.
 func handleFile(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPut {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-
-		return
-	}
-
 	path, err := guestagent.DecodeFilePath(r.URL.Query().Get("path"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -159,25 +156,40 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	switch r.Method {
+	case http.MethodGet:
+		data, err := os.ReadFile(path)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
 
-		return
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write(data)
+	case http.MethodPut:
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+
+			return
+		}
+
+		f, err := os.Create(path)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+
+			return
+		}
+		defer func() { _ = f.Close() }()
+
+		if _, err := io.Copy(f, r.Body); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
-
-	f, err := os.Create(path)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-
-		return
-	}
-	defer func() { _ = f.Close() }()
-
-	if _, err := io.Copy(f, r.Body); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
 }
