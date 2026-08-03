@@ -61,9 +61,9 @@ func (r *Runtime) containerdSocketPath(name string) string {
 //
 // Each image is imported from its own archive stream, one at a time: kind's
 // "load docker-image" instead builds a single multi-image tarball and then
-// resends that whole tarball once per requested image (kind#3063,
-// research-m0-spikes.md); reading (and, for the docker-image loader,
-// exporting) each image's own archive exactly once avoids that
+// resends that whole tarball once per requested image (kind#3063); reading
+// (and, for the docker-image loader, exporting) each image's own archive
+// exactly once avoids that
 // resend-the-world behavior. Layers shared across images (a common base
 // image, or a repeat load of an image already present) are deduplicated for
 // free by containerd's content-addressed store: Import only writes blobs

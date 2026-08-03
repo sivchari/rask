@@ -44,7 +44,7 @@ import (
 // cancel()`), and it silently SIGKILLed the entire control plane
 // (kube-apiserver's own log just stopped mid-line, no shutdown message)
 // the instant boot succeeded — found live, the exact bug class already
-// documented in test/benchmark/PROGRESS.md's hostproc incident
+// documented from an earlier hostproc boot-timeout incident
 // ("errgroup.WithContext's derived context is canceled the first time
 // Wait returns, INCLUDING a successful return"), reintroduced here via a
 // different mechanism (a bare context.WithTimeout instead of an

@@ -14,11 +14,10 @@ import (
 )
 
 // Pinned Alpine linux-virt guest kernel version, for rask's macOS vz
-// substrate. This is v1's guest kernel (see research-m0-spikes.md's
-// 2026-07-30 addendum): a purpose-built kernel with every module rask needs
-// compiled in (=y) is planned as a GitHub Actions cross-compile pipeline
-// under tools/kernel/, not a local build (colima-class CPU/network
-// constraints rule out building it here).
+// substrate. This is v1's guest kernel: a purpose-built kernel with every
+// module rask needs compiled in (=y) is planned as a GitHub Actions
+// cross-compile pipeline under tools/kernel/, not a local build
+// (colima-class CPU/network constraints rule out building it here).
 const (
 	AlpineVersion = "v3.21"
 
@@ -54,8 +53,8 @@ func guestKernelURL() string {
 // for rask's vz substrate guest.
 type GuestKernel struct {
 	// ImagePath is a raw, uncompressed arm64 Linux kernel Image:
-	// vz.NewLinuxBootLoader requires this exact format (confirmed by
-	// spikes/s2/RESULTS.md — no decompression happens on the vz side),
+	// vz.NewLinuxBootLoader requires this exact format (confirmed during
+	// the M0 s2 spike — no decompression happens on the vz side),
 	// but Alpine ships vmlinuz-virt as an EFI-ZBOOT PE wrapping a
 	// gzip-compressed payload, so EnsureGuestKernel unwraps it once at
 	// fetch time (see extractZimgPayload) rather than on every boot.
@@ -137,7 +136,7 @@ const zimgHeaderSize = 0x18
 // it.
 //
 // Layout (confirmed by reading the actual bytes of a downloaded
-// vmlinuz-virt, per spikes/s3/RESULTS.md's production recipe):
+// vmlinuz-virt, per the M0 s3 spike's production recipe):
 //
 //	offset 0x00: "MZ\x00\x00"      PE stub magic
 //	offset 0x04: "zimg"            EFI-ZBOOT magic

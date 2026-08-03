@@ -13,7 +13,7 @@ package guestinit
 // Categories, each verified present in the pinned Alpine linux-virt kernel
 // (components.GuestKernelRelease) by inspecting its real modules.dep:
 //
-//   - boot essentials (spikes/s3/RESULTS.md's production recipe): entropy,
+//   - boot essentials (the M0 s3 spike's production recipe): entropy,
 //     packet/failover plumbing virtio_net depends on, FUSE/virtiofs (for
 //     the Rosetta directory share), binfmt_misc, overlay (containerd's
 //     snapshotter).
@@ -37,9 +37,9 @@ package guestinit
 //     Bundling both whole families rather than hand-picking the minimal
 //     subset is a deliberate simplification (each module is a few KB; the
 //     safety margin against a kube-proxy CrashLoop from one missing
-//     extension is worth more than the bytes saved) — see
-//     plan-m0-spikes.md's networking section ("if an entire iptables
-//     module family is missing... prefer fixing modules").
+//     extension is worth more than the bytes saved) — per the M0 planning
+//     guidance ("if an entire iptables module family is missing... prefer
+//     fixing modules").
 //   - REJECT target support (nf_reject_ipv4/ipv6, ipt_REJECT/ip6t_REJECT,
 //     nft_reject and its ipv4/ipv6/inet variants): kube-proxy's iptables
 //     mode always programs a REJECT rule in KUBE-SERVICES for services with

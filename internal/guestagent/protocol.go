@@ -20,8 +20,8 @@ import (
 
 // Addr and Port are where rask-init's guest agent listens, on the static
 // guest IP the vz substrate's gvisor-tap-vsock network assigns (see
-// internal/substrate/vz's network configuration, matching
-// spikes/s4/RESULTS.md's subnet).
+// internal/substrate/vz's network configuration, matching the M0 s4
+// spike's subnet).
 const (
 	Addr = "192.168.127.2"
 	Port = 7777

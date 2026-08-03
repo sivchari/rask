@@ -18,8 +18,8 @@ import (
 )
 
 // Network subnet/address constants, matching cmd/rask-init's
-// network.go/rosetta.go and spikes/s4/RESULTS.md's production recipe
-// exactly: both sides of the host/guest boundary must agree on these.
+// network.go/rosetta.go and the M0 s4 spike's production recipe exactly:
+// both sides of the host/guest boundary must agree on these.
 const (
 	networkSubnet            = "192.168.127.0/24"
 	networkGatewayIP         = "192.168.127.1"
@@ -35,8 +35,8 @@ const (
 func init() {
 	// gvisor-tap-vsock logs an expected, benign error via its
 	// package-level logrus logger every time a socketpair connection is
-	// closed intentionally (AcceptVfkit's shutdown path — see
-	// spikes/s4/RESULTS.md's "vz API surprises"). Silencing below Error
+	// closed intentionally (AcceptVfkit's shutdown path — a "vz API
+	// surprise" found during the M0 s4 spike). Silencing below Error
 	// keeps rask's own logs free of noise from routine VM teardown;
 	// genuine wiring failures still surface through this package's own
 	// returned errors, not through gvisor-tap-vsock's logger.
@@ -59,9 +59,9 @@ type clusterNetwork struct {
 // virtual network forwarding one to the guest's apiserver port and the
 // other to rask-init's control agent (internal/guestagent), and wires a
 // connected AF_UNIX SOCK_DGRAM socketpair between it and a vz
-// FileHandleNetworkDeviceAttachment — the exact recipe
-// spikes/s4/RESULTS.md validated end to end (extended here with a second
-// Forwards entry for the guest agent, which S4 didn't need).
+// FileHandleNetworkDeviceAttachment — the exact recipe the M0 s4 spike
+// validated end to end (extended here with a second Forwards entry for the
+// guest agent, which S4 didn't need).
 func newClusterNetwork() (*clusterNetwork, error) {
 	hostPort, err := freeTCPPort()
 	if err != nil {
@@ -100,8 +100,8 @@ func newClusterNetwork() (*clusterNetwork, error) {
 		defer close(n.acceptDone)
 
 		// AcceptVfkit blocks until hostConn is closed (Close), which is
-		// the only reliable way to stop it — see spikes/s4/RESULTS.md's
-		// "vz API surprises" — so its returned error on shutdown is
+		// the only reliable way to stop it — a "vz API surprise" found
+		// during the M0 s4 spike — so its returned error on shutdown is
 		// expected and intentionally ignored here.
 		_ = n.vn.AcceptVfkit(context.Background(), n.hostConn)
 	}()
@@ -155,8 +155,8 @@ func (n *clusterNetwork) Close() {
 
 // freeTCPPort binds an ephemeral TCP port on 127.0.0.1, closes it, and
 // returns the port number. A bind-then-close-then-reuse pattern with an
-// inherent (accepted, per spikes/s4/RESULTS.md) TOCTOU race against other
-// local processes racing for the same port between the close here and
+// inherent (accepted, per the M0 s4 spike) TOCTOU race against other local
+// processes racing for the same port between the close here and
 // gvisor-tap-vsock's own bind inside virtualnetwork.New.
 func freeTCPPort() (int, error) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -176,10 +176,9 @@ func freeTCPPort() (int, error) {
 // connectedDatagramPair creates a SOCK_DGRAM AF_UNIX socketpair: the first
 // returned file is handed to vz as the guest side of the virtio-net device,
 // the second is wrapped as a net.Conn for gvisor-tap-vsock's AcceptVfkit —
-// see spikes/s4/RESULTS.md's "the wiring" section for why this framing
-// needs no adapter code (vz's FileHandleNetworkDeviceAttachment and
-// gvisor-tap-vsock's vfkit protocol both expect raw, unframed datagrams per
-// read/write).
+// the M0 s4 spike's wiring, which needs no adapter code (vz's
+// FileHandleNetworkDeviceAttachment and gvisor-tap-vsock's vfkit protocol
+// both expect raw, unframed datagrams per read/write).
 func connectedDatagramPair() (guestFile *os.File, hostConn net.Conn, err error) {
 	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_DGRAM, 0)
 	if err != nil {

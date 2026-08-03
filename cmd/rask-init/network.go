@@ -23,7 +23,7 @@ const (
 )
 
 // Static network configuration matching the gvisor-tap-vsock subnet
-// internal/substrate/vz's host side configures (spikes/s4/RESULTS.md's
+// internal/substrate/vz's host side configures (the M0 s4 spike's
 // production recipe: subnet 192.168.127.0/24, guest .2, gateway/DNS .1).
 // guestagent.Addr must equal guestIP: it's the address the host's guest
 // agent HTTP client connects to.
@@ -38,8 +38,8 @@ const (
 // gvisor-tap-vsock subnet, a default route via the gateway, and a
 // resolv.conf pointing at the gateway's embedded DNS server. No DHCP: the
 // host's gvisor-tap-vsock stack assigns a fixed guest address, so a DORA
-// exchange would be pure overhead (see spikes/s4/RESULTS.md, "static IP
-// path was used rather than DHCP").
+// exchange would be pure overhead (the M0 s4 spike found the static IP
+// path preferable to DHCP).
 func configureNetwork() error {
 	if loLink, err := netlink.LinkByName("lo"); err == nil {
 		_ = netlink.LinkSetUp(loLink)

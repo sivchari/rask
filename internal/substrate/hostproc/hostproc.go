@@ -188,6 +188,13 @@ func (r *Runtime) Start(ctx context.Context, name string, opts substrate.StartOp
 		return err
 	}
 
+	// Before anything else network-related: without bridge-nf-call-iptables
+	// the cluster comes up green but bridged pod-to-pod traffic silently
+	// bypasses kube-proxy and NetworkPolicy (see ensureBridgeNetfilter).
+	if err := ensureBridgeNetfilter(); err != nil {
+		return err
+	}
+
 	src := r.componentSource(opts)
 
 	paths, err := src.Resolve(ctx, components.DefaultK8sVersion, arch)

@@ -2,9 +2,9 @@
 // ("seeds"): a captured kine/SQLite datastore file already containing the
 // RBAC bootstrap ClusterRoles/ClusterRoleBindings, default namespaces, and
 // default manifest bundle (CoreDNS, local-path-provisioner) that a cold
-// "rask create" would otherwise reconcile/apply from scratch. See
-// spikes/s1/RESULTS.md for why this shaves time off apiserver's own
-// bootstrap ("apiserver_readyz"), the dominant cost in a cold create.
+// "rask create" would otherwise reconcile/apply from scratch. Found during
+// the M0 s1 spike to shave time off apiserver's own bootstrap
+// ("apiserver_readyz"), the dominant cost in a cold create.
 package prebake
 
 import (

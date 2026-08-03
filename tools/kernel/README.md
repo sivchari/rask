@@ -35,7 +35,7 @@ Image exists" below).
 Until a CI-built rask kernel has been boot-validated, **rask's v1
 `internal/substrate/vz` should ship with the Alpine `linux-virt` 6.6.142-0-virt
 kernel + `rask-init`'s module-loading path**, exactly as proven end-to-end
-in `spikes/s3/RESULTS.md` (containerd ready in 41ms, amd64 container start
+during the M0 s3 spike (containerd ready in 41ms, amd64 container start
 via Rosetta in ~70-90ms, `RASK-S3-ALL-DONE` with `uname=x86_64` in 3/3 runs).
 That is a real, validated kernel+boot-path today; this tools/kernel/
 pipeline is the built-in-features replacement for it and should only
@@ -44,12 +44,14 @@ validation the Alpine kernel already has.
 
 ## Kernel version pinned
 
-**6.6.142** -- same version as the Alpine `linux-virt` kernel S3 validated
-(`spikes/s3/work/altkernel/boot/config-6.6.142-0-virt`), so the config
-fragment below could be cross-checked line-by-line against a config that is
-*known* to boot under vz and run a full containerd/Rosetta flow, not just
-against defconfig defaults. Override via `KERNEL_VERSION` env var to
-`build.sh` if a later 6.6.x LTS point release is needed.
+**6.6.142** -- same version as the Alpine `linux-virt` kernel the M0 s3
+spike validated (cross-checked against Alpine's actual
+`config-6.6.142-0-virt`, examined during that spike -- see the M0 spike
+results in git history), so the config fragment below could be
+cross-checked line-by-line against a config that is *known* to boot under
+vz and run a full containerd/Rosetta flow, not just against defconfig
+defaults. Override via `KERNEL_VERSION` env var to `build.sh` if a later
+6.6.x LTS point release is needed.
 
 ## Pipeline
 
@@ -90,18 +92,17 @@ the `rask-kernel-src` volume already has `linux-<version>/`, and ccache
 Applied on top of `make ARCH=arm64 defconfig`. Grouped exactly as the task
 brief specified, cross-referenced against two sources per line:
 
-1. **`spikes/s3/work/altkernel/boot/config-6.6.142-0-virt`** -- Alpine's
-   actual `.config` for the linux-virt 6.6.142-0-virt kernel, the one S3
-   booted under vz and ran a real containerd + Rosetta + amd64-image flow
-   against. Every symbol in that config which was `=m` and is needed for
-   boot or container-runtime operation is flipped to `=y` here (Alpine ships
-   it as a module because it's a general-purpose distro kernel; rask never
-   loads modules).
-2. **`spikes/s3/RESULTS.md`**'s "production recipe" module list -- the
-   exact modules `rask-init` loaded by hand in the spike (rng-core,
-   virtio-rng, af_packet, failover, net_failover, virtio_net, fuse,
-   virtiofs, binfmt_misc, overlay) -- confirms nothing in that list was
-   missed.
+1. **Alpine's actual `.config` for the linux-virt 6.6.142-0-virt kernel**
+   (examined during the M0 s3 spike -- see the M0 spike results in git
+   history) -- the one that spike booted under vz and ran a real containerd
+   + Rosetta + amd64-image flow against. Every symbol in that config which
+   was `=m` and is needed for boot or container-runtime operation is
+   flipped to `=y` here (Alpine ships it as a module because it's a
+   general-purpose distro kernel; rask never loads modules).
+2. **The M0 s3 spike's "production recipe" module list** -- the exact
+   modules `rask-init` loaded by hand in that spike (rng-core, virtio-rng,
+   af_packet, failover, net_failover, virtio_net, fuse, virtiofs,
+   binfmt_misc, overlay) -- confirms nothing in that list was missed.
 
 Categories:
 
@@ -216,9 +217,12 @@ it to `tools/kernel/work/Image` and:
 
 1. **Magic check**: bytes at offset `0x38` should read `ARMd` (CI already
    gates on this, but re-check locally too).
-2. **S2 harness** (boot-to-init latency vs puipui's 125ms p50 baseline,
-   `spikes/s2/RESULTS.md`):
+2. **S2 harness** (boot-to-init latency vs puipui's 125ms p50 baseline).
+   The `spike-s2` harness and its `RESULTS.md` were removed along with the
+   M0 spikes in commit 75816cd; check out the tree at that commit's parent
+   to rebuild and run it:
    ```sh
+   git checkout 75816cd~1 -- spikes/s2
    cd spikes/s2
    ./work/spike-s2 -kernel /abs/path/to/tools/kernel/work/Image \
      -initrd work/initramfs.cpio -runs 10
@@ -229,17 +233,20 @@ it to `tools/kernel/work/Image` and:
    net/vsock) is expected to cost some boot time over puipui specifically,
    but should still be far under the 2s spike target from S2.
 3. **S3 harness** (Rosetta/containerd end-to-end, modules expected to
-   fail-open since this Image ships no `/lib/modules/*.ko.gz` --
-   `spikes/s3/init/modules.go` + `main.go` already handle a missing module
+   fail-open since this Image ships no `/lib/modules/*.ko.gz` -- the s3
+   spike's `init/modules.go` + `main.go` already handled a missing module
    file by printing `RASK-S3-MODULES-FAILED` and continuing, no spike code
-   changes needed):
+   changes needed). Like S2, the `spike-s3` harness was removed with the M0
+   spikes in commit 75816cd; check out the tree at that commit's parent to
+   rebuild and run it:
    ```sh
+   git checkout 75816cd~1 -- spikes/s3
    cd spikes/s3
    ./work/spike-s3 -kernel /abs/path/to/tools/kernel/work/Image \
      -initrd work/initramfs.cpio
    ```
    Target: `RASK-S3-ALL-DONE` with `uname=x86_64`, matching the Alpine
-   kernel's 3/3 pass rate in `spikes/s3/RESULTS.md`.
+   kernel's 3/3 pass rate the M0 s3 spike recorded.
 4. Update this README's "Status" section with the real kernel version,
    `Image` size, measured S2 boot time (p50/p95), and S3 pass/fail --
    replacing this whole section once done.

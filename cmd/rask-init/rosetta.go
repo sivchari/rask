@@ -16,7 +16,7 @@ const rosettaInterpreter = guestlayout.RosettaMount + "/rosetta"
 // mountRosettaAndRegisterBinfmt mounts the host's
 // VZLinuxRosettaDirectoryShare (virtiofs tag "rosetta") and registers it as
 // the amd64 binfmt_misc interpreter, letting containerd run amd64-only
-// images transparently (spikes/s3's production recipe).
+// images transparently (the M0 s3 spike's production recipe).
 //
 // NOT CALLED right now (see disabledFeatures below): the host side
 // (internal/substrate/vz/vm.go's attachRosetta) no longer attaches this

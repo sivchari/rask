@@ -2,8 +2,8 @@
 
 // Command rask-init is PID 1 inside a rask vz guest: it mounts the base
 // pseudo-filesystems, loads kernel modules, switches to a tmpfs root
-// (spikes/s3's "--no-pivot" workaround was spike-only — production runc
-// needs a real mount point to pivot_root into), formats and mounts the
+// (the M0 s3 spike's "--no-pivot" workaround was spike-only — production
+// runc needs a real mount point to pivot_root into), formats and mounts the
 // per-cluster data disk, brings up static networking against
 // gvisor-tap-vsock, mounts Rosetta and registers binfmt_misc, then runs
 // internal/bootstrap.Boot (the same DAG internal/substrate/hostproc uses on
@@ -12,7 +12,7 @@
 // kubeconfig and satisfy substrate.Runtime's Exec/WriteFile.
 //
 // No shell, no busybox: every stage is plain Go over syscalls/netlink,
-// matching the approach spikes/s2-s4 established. Every stage prints a
+// matching the approach the M0 s2-s4 spikes established. Every stage prints a
 // RASK-INIT-* marker line to the console (virtio console, the only output
 // channel available before networking exists) so the host can observe boot
 // progress and, during development, diagnose exactly where a boot stalled.

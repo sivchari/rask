@@ -8,7 +8,7 @@ func TestAMD64ELFRegistration_NoTrailingNUL(t *testing.T) {
 	got := AMD64ELFRegistration("/mnt/rosetta/rosetta")
 
 	if len(got) == 0 || got[len(got)-1] == 0 {
-		// spikes/s3/RESULTS.md: a trailing NUL makes the kernel's
+		// Found during the M0 s3 spike: a trailing NUL makes the kernel's
 		// binfmt_misc/register write fail with EINVAL.
 		t.Fatalf("AMD64ELFRegistration ends with a NUL byte: %q", got)
 	}
