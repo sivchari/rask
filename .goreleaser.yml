@@ -1,0 +1,91 @@
+version: 2
+
+project_name: rask
+
+# darwin/arm64 is deliberately absent: the vz substrate requires cgo and
+# Apple's Virtualization.framework, which cannot be cross-compiled from a
+# Linux runner. macOS users install with `go install` or `make codesign`.
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: rask
+    main: ./cmd/rask
+    binary: rask
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+
+  # Bundled variants embed the full component payload (Kubernetes binaries,
+  # kine, containerd, runc, CNI plugins) so `rask create` needs no network.
+  # Each build stages its own payload in a pre hook; run goreleaser with
+  # --parallelism 1 so the two stagings never overlap.
+  - id: rask-bundled-amd64
+    main: ./cmd/rask
+    binary: rask-bundled
+    tags:
+      - bundle
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+    ldflags:
+      - -s -w
+    hooks:
+      pre:
+        - go run ./cmd/bundle-payload -target linux/amd64
+
+  - id: rask-bundled-arm64
+    main: ./cmd/rask
+    binary: rask-bundled
+    tags:
+      - bundle
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - arm64
+    ldflags:
+      - -s -w
+    hooks:
+      pre:
+        - go run ./cmd/bundle-payload -target linux/arm64
+
+archives:
+  - id: rask
+    formats: ['tar.gz']
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+    ids:
+      - rask
+
+  - id: rask-bundled
+    formats: ['tar.gz']
+    name_template: "{{ .ProjectName }}-bundled_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+    ids:
+      - rask-bundled-amd64
+      - rask-bundled-arm64
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+
+changelog:
+  sort: asc
+
+release:
+  use_existing_draft: true
