@@ -90,3 +90,19 @@ jobs:
           args: release --clean --parallelism 1 --config .goreleaser-darwin.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Neither goreleaser run publishes (both keep the release a draft), so
+  # publishing happens exactly once, here, after both have attached their
+  # artifacts.
+  publish:
+    needs: [tagpr, goreleaser, goreleaser-darwin]
+    if: needs.tagpr.outputs.tagpr-tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.tagpr.outputs.tagpr-tag }}
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
