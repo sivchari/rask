@@ -195,6 +195,15 @@ func (r *Runtime) Start(ctx context.Context, name string, opts substrate.StartOp
 		return err
 	}
 
+	// Also before anything else network-related: on a host with Docker
+	// installed, FORWARD's default policy is DROP and nothing else adds a
+	// matching ACCEPT rule for rask's own cni0 bridge, so bridged pod
+	// traffic is silently dropped even though the cluster comes up green
+	// (see ensureForwardAcceptPodCIDR).
+	if err := ensureForwardAcceptPodCIDR(); err != nil {
+		return err
+	}
+
 	src := r.componentSource(opts)
 
 	paths, err := src.Resolve(ctx, components.DefaultK8sVersion, arch)
