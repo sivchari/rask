@@ -285,12 +285,22 @@ func writeKubeletConfig(dataDir, caCertPath, containerdSocket string) (*kubeletP
 // DaemonSet pod (see boot.go's kube-proxy phase comment for why), but the
 // configuration shape itself is the same one a DaemonSet would mount from a
 // ConfigMap, so it stays portable if rask grows a DaemonSet form later.
+//
+// conntrack.maxPerCore is 0 so kube-proxy never writes
+// net.netfilter.nf_conntrack_max: that sysctl is owned by the init network
+// namespace, so inside a container (even a privileged one) the write fails
+// with EPERM and kube-proxy exits -- but only when the host's current value
+// happens to be below kube-proxy's computed target, which is why in-container
+// clusters worked on some hosts and not others. kind zeroes the same knob
+// for the same reason.
 const kubeProxyConfigTemplate = `apiVersion: kubeproxy.config.k8s.io/v1alpha1
 kind: KubeProxyConfiguration
 clientConnection:
   kubeconfig: %q
 mode: iptables
 clusterCIDR: %q
+conntrack:
+  maxPerCore: 0
 `
 
 // writeKubeProxyConfig renders KubeProxyConfiguration under dataDir.

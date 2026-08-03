@@ -156,6 +156,7 @@ func TestWriteKubeProxyConfig_RendersRequiredFields(t *testing.T) {
 		`kubeconfig: "/opt/rask/kubeconfigs/kube-proxy.kubeconfig"`,
 		"mode: iptables",
 		`clusterCIDR: "10.244.0.0/16"`,
+		"maxPerCore: 0",
 	} {
 		if !strings.Contains(content, want) {
 			t.Errorf("kube-proxy config missing %q:\n%s", want, content)
