@@ -252,10 +252,31 @@ func (r *Runtime) Start(ctx context.Context, name string, opts substrate.StartOp
 }
 
 // spawnVMHost execs the currently-running rask binary as
-// "rask __vm-host --name <name>", detached from the current process group
-// (Setpgid) so it survives both this CLI invocation exiting and any
-// terminal signal (e.g. Ctrl-C) delivered to this invocation's process
-// group while Start is still waiting for boot to finish.
+// "rask __vm-host --name <name>", detached into a brand new session
+// (Setsid) so it survives this CLI invocation exiting, any terminal signal
+// (e.g. Ctrl-C) delivered to this invocation's process group while Start
+// is still waiting for boot to finish, and — the actual reason this is
+// Setsid and not just Setpgid — any SIGHUP the controlling
+// terminal/session generates for the rest of vm-host's life, not only at
+// spawn time.
+//
+// Found live during this session: a healthy vm-host process died silently
+// ~100s into a cluster's life, with zero trace in vm-host.log (no panic,
+// no watchdog message, no vz state-change error — see vmhost.go's
+// handleVMStateChange for the other half of this fix), correlated with an
+// unrelated sibling background process (a kubectl port-forward) being
+// killed by an external harness. Setpgid alone only leaves the process
+// *group*, not the *session* — a vm-host started that way is still a
+// member of whatever session spawned "rask create", so it stays reachable
+// by that session's own signal delivery (e.g. a controlling terminal
+// hanging up) for its entire life. Go's default disposition for an
+// unhandled SIGHUP is to terminate the process immediately, running no
+// deferred cleanup (stopVM/console.Close/net.Close/lock.Release never
+// fire) and logging nothing — indistinguishable from this incident.
+// Setsid closes that off entirely; vmhost_darwin.go additionally now
+// catches SIGHUP explicitly as defense in depth, so even a directly
+// targeted "kill -HUP" (which Setsid alone cannot stop, since it is not a
+// broadcast) becomes a clean, logged shutdown instead of a silent one.
 func (r *Runtime) spawnVMHost(name string) (pid int, err error) {
 	self, err := os.Executable()
 	if err != nil {
@@ -276,7 +297,7 @@ func (r *Runtime) spawnVMHost(name string) (pid int, err error) {
 	cmd := exec.Command(self, "__vm-host", "--home", r.homeDir, "--name", name)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
 	if err := cmd.Start(); err != nil {
 		return 0, fmt.Errorf("vz: starting vm-host process: %w", err)

@@ -5,6 +5,7 @@ package vz
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -168,8 +169,8 @@ func RunVMHost(ctx context.Context, homeDir, name string) error {
 	case <-runCtx.Done():
 		return watchdogResult(watchdogFailed)
 	case st := <-vm.StateChangedNotify():
-		if st == cvz.VirtualMachineStateStopped || st == cvz.VirtualMachineStateError {
-			return fmt.Errorf("vz: virtual machine unexpectedly reached state %v", st)
+		if err := handleVMStateChange(os.Stderr, st); err != nil {
+			return err
 		}
 
 		// Any other transition (e.g. Running) is not terminal; keep
@@ -184,11 +185,33 @@ func waitForTerminalOrCancel(ctx context.Context, vm *cvz.VirtualMachine, watchd
 		case <-ctx.Done():
 			return watchdogResult(watchdogFailed)
 		case st := <-vm.StateChangedNotify():
-			if st == cvz.VirtualMachineStateStopped || st == cvz.VirtualMachineStateError {
-				return fmt.Errorf("vz: virtual machine unexpectedly reached state %v", st)
+			if err := handleVMStateChange(os.Stderr, st); err != nil {
+				return err
 			}
 		}
 	}
+}
+
+// handleVMStateChange logs st — every vz VM state transition, terminal or
+// not — to w (RunVMHost passes os.Stderr, which spawnVMHost redirects to
+// vm-host.log), then returns a non-nil error if st is terminal
+// (Stopped/Error) for the caller to return from RunVMHost.
+//
+// Added after a real incident where a vm-host process disappeared with
+// zero trace in vm-host.log: nothing was logging what vz did or didn't
+// report about the VM's state, so a silent death was completely
+// undiagnosable after the fact. This logs every transition unconditionally
+// — not only the terminal ones RunVMHost already treated as fatal — so an
+// unexpected non-terminal transition (e.g. flapping through Pausing/
+// Paused) also leaves a trail instead of vanishing between two polls.
+func handleVMStateChange(w io.Writer, st cvz.VirtualMachineState) error {
+	_, _ = fmt.Fprintf(w, "%s vz: virtual machine state changed to %v\n", time.Now().Format(time.RFC3339Nano), st)
+
+	if st == cvz.VirtualMachineStateStopped || st == cvz.VirtualMachineStateError {
+		return fmt.Errorf("vz: virtual machine unexpectedly reached state %v", st)
+	}
+
+	return nil
 }
 
 // watchdogResult reports why runCtx ended: nil for a normal (external)

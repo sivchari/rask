@@ -105,6 +105,7 @@ func (r *Runtime) Stop(ctx context.Context, name string) error {
 
 	unmountUnder(r.dataDir(name))
 	removeCNIBridge()
+	removeForwardAcceptPodCIDR()
 
 	if err := os.Remove(r.runningMarkerPath(name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("hostproc: removing running marker: %w", err)
