@@ -134,17 +134,38 @@ func TestWaitHTTPOK_TimesOutWhenNeverReady(t *testing.T) {
 func TestWaitHTTPOK_TimeoutErrorIncludesLastStatus(t *testing.T) {
 	t.Parallel()
 
+	// Cancellation is driven by requests actually served, not by a wall
+	// clock: with a fixed short timeout, a loaded machine can cancel the
+	// very first request in flight, leaving the context error — not the
+	// 503 this asserts on — as the last error observed.
+	served := make(chan struct{}, 2)
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
+
+		select {
+		case served <- struct{}{}:
+		default:
+		}
 	}))
 	defer srv.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	err := waitHTTPOK(ctx, srv.Client(), srv.URL)
+	errCh := make(chan error, 1)
+	go func() { errCh <- waitHTTPOK(ctx, srv.Client(), srv.URL) }()
+
+	// The second request proves the first response was fully consumed, so
+	// the 503 is already recorded as the last error.
+	<-served
+	<-served
+
+	cancel()
+
+	err := <-errCh
 	if err == nil {
-		t.Fatal("waitHTTPOK = nil error, want timeout error")
+		t.Fatal("waitHTTPOK = nil error, want cancellation error")
 	}
 
 	if !strings.Contains(err.Error(), "503") {
