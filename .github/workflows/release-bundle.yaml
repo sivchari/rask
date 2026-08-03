@@ -92,3 +92,18 @@ jobs:
           tag="${GITHUB_REF#refs/tags/}"
           gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --generate-notes
           gh release upload "$tag" "${{ steps.package.outputs.name }}" "${{ steps.package.outputs.name }}.sha256" --clobber
+
+  # kumo と同じ運用: 全 platform のアセット添付が完了したら draft を自動
+  # publish する (tagpr が作った draft release を最終確定させる)。手動での
+  # publish 操作は不要。
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false
