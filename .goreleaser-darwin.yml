@@ -73,3 +73,7 @@ changelog:
 release:
   use_existing_draft: true
   mode: append
+  # Both goreleaser runs only append to the shared draft; a separate
+  # workflow job publishes it once both have finished, so the two never
+  # race to publish (which creates a second release for the same tag).
+  draft: true
