@@ -18,8 +18,9 @@ const machineIdentifierFileName = "machine-identifier"
 // loadOrCreateMachineIdentifier returns the persisted machine identifier at
 // path, creating and persisting a new one if none exists yet.
 //
-// spikes/s5/RESULTS.md: RestoreMachineStateFromURL fails with VZErrorDomain
-// Code=12 ("invalid argument") unless the restoring VM is configured with
+// Found during the M0 s5 spike: RestoreMachineStateFromURL fails with
+// VZErrorDomain Code=12 ("invalid argument") unless the restoring VM is
+// configured with
 // the exact same identifier as the VM that was saved. rask persists this
 // per cluster at Create time — before v1 has any save/restore feature at
 // all — because it's free to do now and expensive to retrofit once

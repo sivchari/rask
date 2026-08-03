@@ -16,9 +16,9 @@ const eiNIdent = 16
 //     both ET_EXEC (2, static/non-PIE) and ET_DYN (3, PIE) — almost all
 //     modern distro binaries are ET_DYN.
 //
-// Verified against real bytes in spikes/s3 (see RESULTS.md's production
-// recipe); ported here unchanged so it's unit-testable independent of the
-// syscalls that use it.
+// Verified against real bytes during the M0 s3 spike's production recipe;
+// ported here unchanged so it's unit-testable independent of the syscalls
+// that use it.
 func AMD64ELFMagicMask() (magic, mask []byte) {
 	magic = make([]byte, 0, eiNIdent+4)
 	magic = append(magic, 0x7f, 'E', 'L', 'F') // EI_MAG0..3
@@ -58,7 +58,7 @@ func AMD64ELFRegistration(interpreterPath string) string {
 	magic, mask := AMD64ELFMagicMask()
 	// No trailing terminator: the kernel accepts the bare line, and a
 	// trailing NUL makes the write fail with EINVAL (verified empirically
-	// on Linux 6.6 and 6.8 — see spikes/s3/RESULTS.md).
+	// on Linux 6.6 and 6.8 during the M0 s3 spike).
 	return fmt.Sprintf(":rosetta:M::%s:%s:%s:OF",
 		escape(magic), escape(mask), interpreterPath)
 }

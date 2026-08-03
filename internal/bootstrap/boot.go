@@ -31,11 +31,11 @@ const defaultClusterName = "rask"
 // Bounded default deadlines for every readiness wait in the boot DAG.
 // Without these, a component that starts but never becomes healthy (wrong
 // cgroup driver, a missing device, a crash-looping binary — real operator
-// errors, not hypotheticals: both found live during in-container testing,
-// see test/benchmark/PROGRESS-incontainer.md) hangs "rask create" forever
+// errors, not hypotheticals: both found live during the M3 in-container
+// trials) hangs "rask create" forever
 // instead of failing fast with a clear, phase-named error. Values are
 // generous relative to this project's own measured boot latencies
-// (RESULTS-linux.md: node_ready in ~3s on a bare host) so a slow or
+// (node_ready in ~3s on a bare-host Linux measurement) so a slow or
 // contended machine doesn't trip a false timeout, while still bounding the
 // wait. Each is threaded into its phase function as an explicit parameter
 // (mirrors internal/substrate/vz/watchdog.go's runBootWatchdog, which takes
@@ -365,7 +365,7 @@ func bootDatastoreAndControlPlane(launchCtx, waitCtx context.Context, cfg Config
 
 	// anonymous-auth is off, so even /readyz needs a credential:
 	// authentication happens before the "always allow" authorization
-	// exemption for health endpoints (see gotcha in spikes/s1/RESULTS.md).
+	// exemption for health endpoints (a gotcha found during the M0 s1 spike).
 	adminTLSCert, err := tls.X509KeyPair(cpki.AdminCert.CertPEM, cpki.AdminCert.KeyPEM)
 	if err != nil {
 		return fmt.Errorf("bootstrap: loading admin client cert: %w", err)
@@ -411,7 +411,7 @@ func bootControlPlane(launchCtx, waitCtx context.Context, cfg Config, tl *Timeli
 			// service account rather than the coarser
 			// system:kube-controller-manager identity, which the
 			// built-in RBAC bootstrap policy does not grant node write
-			// access to (see gotcha in spikes/s1/RESULTS.md).
+			// access to (a gotcha found during the M0 s1 spike).
 			"--use-service-account-credentials=true",
 			"--service-account-private-key-file=" + cpki.ServiceAccountPrivPath,
 			"--root-ca-file=" + cpki.CACertPath,

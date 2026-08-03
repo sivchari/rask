@@ -11,9 +11,9 @@ import (
 
 // e2fsprogsPackages are every Alpine aarch64 package rask-init needs to run
 // mkfs.ext4 once, at first boot, to format the per-cluster virtio-blk data
-// disk (see plan-m0-spikes.md's guest layout: /var lives on this disk, not
-// tmpfs). mkfs.ext4 (part of e2fsprogs) is dynamically linked against musl
-// plus e2fsprogs-libs/libblkid/libcom_err/libuuid/libeconf; this is the full
+// disk (/var lives on this disk, not tmpfs). mkfs.ext4 (part of e2fsprogs)
+// is dynamically linked against musl plus
+// e2fsprogs-libs/libblkid/libcom_err/libuuid/libeconf; this is the full
 // transitive closure (resolved against Alpine's v3.21 APKINDEX "p:"/"D:"
 // fields, the same way iptablesPackages was).
 var e2fsprogsPackages = []iptablesPackage{

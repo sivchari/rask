@@ -17,10 +17,9 @@ import (
 
 // cpioTrailerName is the sentinel entry name cpio archives (and the
 // kernel's initramfs unpacker) use to mark the end of one archive. Two or
-// more archives can be concatenated as one initrd (plan-m0-spikes.md's
-// per-cluster config transport decision) precisely because the kernel's
-// unpacker keeps scanning for another header immediately after seeing this
-// entry, rather than stopping at EOF.
+// more archives can be concatenated as one initrd precisely because the
+// kernel's unpacker keeps scanning for another header immediately after
+// seeing this entry, rather than stopping at EOF.
 const cpioTrailerName = "TRAILER!!!"
 
 // cpioBlockSize is the block size cpioWriter pads the final archive to,

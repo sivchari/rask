@@ -6,7 +6,7 @@ import (
 )
 
 // Pinned third-party component versions. These mirror the versions proven
-// working in spikes/s1/fetch.sh. Only the Kubernetes version is expected to
+// working during the M0 s1 spike. Only the Kubernetes version is expected to
 // vary across rask releases (via Ensure's k8sVersion parameter); the rest
 // are pinned here because rask's boot DAG and generated configs are tested
 // against these exact releases.

@@ -23,8 +23,8 @@ import (
 )
 
 // stopGracePeriod is how long Stop waits after SIGTERM before escalating to
-// SIGKILL, mirroring the grace period spikes/s1 used for a clean teardown
-// (letting kine/etc. checkpoint state).
+// SIGKILL, mirroring the grace period the M0 s1 spike used for a clean
+// teardown (letting kine/etc. checkpoint state).
 const stopGracePeriod = 300 * time.Millisecond
 
 // runningMarkerName is created by Start on success and removed by Stop,
@@ -52,8 +52,8 @@ func (r *Runtime) runningMarkerPath(name string) string {
 // shim is deliberately designed to survive its containerd daemon dying
 // (see gracefulStopPods's doc comment), so simply killing containerd —
 // gracefully or not — never stops the shims it was supervising. The only
-// reliable way found (see test/benchmark/PROGRESS-robustness.md for the
-// investigation) is the exact same path every ordinary pod deletion
+// reliable way found (established during the robustness investigation) is
+// the exact same path every ordinary pod deletion
 // already takes: ask the cluster's own API server to delete each pod while
 // kubelet and containerd are still alive, and wait for kubelet/CRI to
 // actually finish tearing it down. So: stop controller-manager/scheduler
@@ -143,10 +143,10 @@ const gracefulPodDeleteGracePeriodSeconds = int64(5)
 // whole point is surviving a containerd restart/crash), so no amount of
 // gracefully signaling containerd itself ever stops the shims it was
 // supervising — only asking kubelet/CRI to tear down each pod while
-// containerd is still alive does. Confirmed empirically (see
-// test/benchmark/PROGRESS-robustness.md): a plain "kubectl delete pod"
-// reliably stops the shim within a few seconds; talking to containerd's
-// own task/sandbox client API directly did not.
+// containerd is still alive does. Confirmed empirically during the
+// robustness investigation: a plain "kubectl delete pod" reliably stops
+// the shim within a few seconds; talking to containerd's own task/sandbox
+// client API directly did not.
 const gracefulPodStopTimeout = 15 * time.Second
 
 // podPollInterval governs gracefulStopPods' wait for pods to disappear.
@@ -245,10 +245,9 @@ const shimTaskGlob = "containerd/state/io.containerd.runtime.v2.task/*/*"
 // directory for its entire lifetime — containerd/v2's runtime-v2 shim
 // protocol documents this ("the start command ... has the bundle for the
 // container set as the cwd"), confirmed empirically against this exact
-// containerd/runc build during this fix's investigation (see
-// test/benchmark/PROGRESS-robustness.md) — which gives an exact,
-// non-pattern-matched way to identify which OS process, if any, belongs to
-// a given bundle: never a name-based kill across every
+// containerd/runc build during the robustness investigation — which gives
+// an exact, non-pattern-matched way to identify which OS process, if any,
+// belongs to a given bundle: never a name-based kill across every
 // "containerd-shim-runc-v2" process on the host.
 func killOrphanedShims(dataDir string) {
 	bundles, err := filepath.Glob(filepath.Join(dataDir, shimTaskGlob))
@@ -328,7 +327,8 @@ func killAll(pids []int, sig syscall.Signal) {
 // unmountUnder lazily unmounts every mount point nested under dir (e.g.
 // overlayfs snapshots containerd leaves behind after creating a pod
 // sandbox), deepest-first, so removing dir afterward doesn't fail with
-// EBUSY. Best-effort: errors are ignored, matching spikes/s1's teardown.
+// EBUSY. Best-effort: errors are ignored, matching the M0 s1 spike's
+// teardown.
 func unmountUnder(dir string) {
 	mounts, err := mountPointsUnder(dir)
 	if err != nil {

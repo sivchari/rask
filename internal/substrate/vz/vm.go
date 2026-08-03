@@ -38,13 +38,13 @@ type vmConfig struct {
 
 // buildVirtualMachineConfiguration wires together every vz device rask's
 // guest needs: the boot loader (kernel Image + concatenated initrd, per
-// spikes/s2's confirmed "arm64 requires an uncompressed kernel Image, no
-// decompression on the vz side" finding), a virtio-console serial port for
-// boot markers, the required entropy device (spikes/s3: DHCP/getrandom
-// hangs without it), the cluster's virtio-net device (network.go), the
-// virtio-blk data disk, Rosetta's directory share (gated on host
-// availability, per plan-m0-spikes.md's Rosetta section), and the
-// persisted machine identifier (for future save/restore, spikes/s5).
+// the M0 s2 spike's confirmed "arm64 requires an uncompressed kernel Image,
+// no decompression on the vz side" finding), a virtio-console serial port
+// for boot markers, the required entropy device (the M0 s3 spike found
+// DHCP/getrandom hangs without it), the cluster's virtio-net device
+// (network.go), the virtio-blk data disk, Rosetta's directory share (gated
+// on host availability), and the persisted machine identifier (for future
+// save/restore, per the M0 s5 spike).
 func buildVirtualMachineConfiguration(cfg vmConfig) (*cvz.VirtualMachineConfiguration, *consolePipes, error) {
 	// panic=0: a panicking guest halts instead of reboot-looping. panic=-1
 	// (instant reboot) turned every failed boot into an infinite CPU-burning
@@ -154,10 +154,10 @@ func (c *consolePipes) startReading() {
 
 // attachConsole wires a VirtioConsoleDeviceSerialPortConfiguration backed
 // by an os.Pipe pair. NewFileHandleSerialPortAttachment(read, write)'s
-// parameter naming is inverted from intuition (spikes/s2/RESULTS.md's "vz
-// API surprises"): "read" is what the framework reads from to send bytes
-// INTO the guest, "write" is what the framework writes guest output INTO —
-// so the host must read from the "write" pipe to see console output.
+// parameter naming is inverted from intuition (a "vz API surprise" found
+// during the M0 s2 spike): "read" is what the framework reads from to send
+// bytes INTO the guest, "write" is what the framework writes guest output
+// INTO — so the host must read from the "write" pipe to see console output.
 func attachConsole(config *cvz.VirtualMachineConfiguration) (*consolePipes, error) {
 	inR, inW, err := os.Pipe()
 	if err != nil {

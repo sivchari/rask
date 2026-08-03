@@ -3,8 +3,8 @@
 // resolution, kernel command-line parameter parsing, and binfmt_misc
 // registration string construction. None of this touches the OS directly
 // (no syscalls, no file I/O beyond what callers hand it as strings/bytes),
-// so it builds and tests on any host, matching the pattern
-// spikes/s3/init/{bootparam,binfmt} established.
+// so it builds and tests on any host, matching the pattern established
+// during the M0 s3 spike's bootparam/binfmt work.
 package guestinit
 
 import (

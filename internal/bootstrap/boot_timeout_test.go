@@ -15,7 +15,7 @@ import (
 
 // TestBootContainerd_TimesOutWhenSocketNeverAppears is a regression test
 // for boot.go's readiness waits having no bounded deadline of their own
-// (see test/benchmark/PROGRESS-incontainer.md): /bin/sleep starts
+// (found during the M3 in-container trials): /bin/sleep starts
 // successfully (so sup.Launch succeeds) but never opens a unix socket, so
 // without a bound this would hang forever instead of failing fast with a
 // phase-named error.
@@ -57,10 +57,9 @@ func TestBootContainerd_TimesOutWhenSocketNeverAppears(t *testing.T) {
 
 // TestBootKubelet_TimesOutWhenHealthzNeverReady is a regression test for
 // the exact gap the task that produced this fix cited directly
-// (boot.go's kubelet readiness wait, formerly unbounded — see
-// test/benchmark/PROGRESS-incontainer.md's trial 2 and trial 4, both of
-// which hung "rask create" forever on a kubelet that started but never
-// became healthy).
+// (boot.go's kubelet readiness wait, formerly unbounded — the M3
+// in-container trials' trial 2 and trial 4 both hung "rask create" forever
+// on a kubelet that started but never became healthy).
 func TestBootKubelet_TimesOutWhenHealthzNeverReady(t *testing.T) {
 	t.Parallel()
 

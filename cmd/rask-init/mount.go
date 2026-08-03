@@ -61,13 +61,13 @@ var excludedFromCopy = map[string]bool{
 	"/proc": true, "/sys": true, "/dev": true, newRoot: true,
 }
 
-// switchRoot performs rask's tmpfs switch_root trick (plan-m0-spikes.md's
-// guest layout decision): mount a fresh tmpfs, copy the initramfs's entire
-// content into it, then chroot into it. The resulting root is a real mount
-// point (a tmpfs vfsmount, not the initramfs's anonymous rootfs), which is
-// what lets runc's pivot_root(2) succeed later — spikes/s3 needed
-// `ctr run --no-pivot` specifically because its rootfs was the unmounted
-// initramfs, which always fails pivot_root with EINVAL.
+// switchRoot performs rask's tmpfs switch_root trick: mount a fresh tmpfs,
+// copy the initramfs's entire content into it, then chroot into it. The
+// resulting root is a real mount point (a tmpfs vfsmount, not the
+// initramfs's anonymous rootfs), which is what lets runc's pivot_root(2)
+// succeed later — an unmounted initramfs rootfs (the M0 s3 spike worked
+// around this with `ctr run --no-pivot`) always fails pivot_root with
+// EINVAL.
 //
 // Unlike util-linux's switch_root (which discards the old root and execs a
 // new init binary from the new one), rask-init keeps running as the same

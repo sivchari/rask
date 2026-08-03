@@ -39,10 +39,10 @@ const templateInitramfsVersion = "v12"
 // per-cluster cpio archive concatenated onto this one: everything else
 // bootstrap.Boot needs (PKI, kubeconfigs, component configs) is generated
 // fresh inside the guest at boot, exactly like internal/substrate/hostproc
-// does on Linux. This is a deliberate simplification of
-// plan-m0-spikes.md's per-cluster config transport design (which
-// anticipated shipping pre-generated PKI for future snapshot/restore
-// stability): v1's goal is create/delete, not save/restore, and reusing
+// does on Linux. This is a deliberate simplification of the M0 planning
+// notes' per-cluster config transport design (which anticipated shipping
+// pre-generated PKI for future snapshot/restore stability): v1's goal is
+// create/delete, not save/restore, and reusing
 // internal/bootstrap.Boot completely unmodified is both simpler and
 // consistent with hostproc's proven implementation.
 func buildTemplateInitramfs(ctx context.Context, cache *components.Cache) (string, error) {

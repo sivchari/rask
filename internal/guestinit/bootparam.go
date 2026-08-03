@@ -7,12 +7,12 @@ import (
 )
 
 // Kernel command-line parameter keys rask-init reads from /proc/cmdline.
-// The host (internal/substrate/vz) sets these via vz.WithCommandLine; see
-// spikes/s3/RESULTS.md's "guest clock" finding for why BootTimeUnixNano is
-// needed (this kernel has no RTC, so it otherwise boots at the Unix epoch,
-// breaking TLS certificate validation) and plan-m0-spikes.md's per-cluster
-// config transport decision for why ClusterName travels this way rather
-// than through a shared config file.
+// The host (internal/substrate/vz) sets these via vz.WithCommandLine.
+// BootTimeUnixNano is needed because this kernel has no RTC, so it
+// otherwise boots at the Unix epoch, breaking TLS certificate validation.
+// ClusterName travels this way, rather than through a shared config file,
+// as a deliberate per-cluster config transport simplification (see
+// buildTemplateInitramfs's doc comment).
 const (
 	clusterNameParam = "rask.cluster="
 	boottimeParam    = "rask.boottime="

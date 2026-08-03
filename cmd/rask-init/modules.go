@@ -32,12 +32,12 @@ import (
 // libcrc32c's init propagates it as init_module's return value, even
 // though nf_conntrack (the actual reason libcrc32c is in the dependency
 // closure) works fine against the kernel's builtin generic CRC32
-// implementation regardless. Matching plan-m0-spikes.md's explicit
-// guidance ("if an entire iptables module family is missing, kube-proxy
-// can also run in a degraded mode — prefer fixing modules" — i.e. tolerate
-// partial module failures rather than treat any single one as fatal to the
-// whole boot), only a structurally broken initramfs (missing/corrupt
-// modules.dep) aborts boot here.
+// implementation regardless. Per the M0 planning guidance ("if an entire
+// iptables module family is missing, kube-proxy can also run in a
+// degraded mode — prefer fixing modules" — i.e. tolerate partial module
+// failures rather than treat any single one as fatal to the whole boot),
+// only a structurally broken initramfs (missing/corrupt modules.dep)
+// aborts boot here.
 func loadModules() error {
 	depContent, err := os.ReadFile(filepath.Join(guestlayout.ModulesDir, "modules.dep"))
 	if err != nil {

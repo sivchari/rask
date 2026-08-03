@@ -17,8 +17,8 @@ import (
 
 // RunVMHost is the entry point for the "rask __vm-host" hidden CLI
 // subcommand (cmd/rask), which Runtime.Start spawns as a detached child
-// process (plan-m0-spikes.md's "daemonless, pidfile in the cluster dir"
-// VM lifecycle decision): the VM and its gvisor-tap-vsock network live in
+// process (a "daemonless, pidfile in the cluster dir" VM lifecycle
+// design): the VM and its gvisor-tap-vsock network live in
 // this process, not in the "rask create" invocation that started it, so
 // the cluster keeps running after that invocation exits.
 //
