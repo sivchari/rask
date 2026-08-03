@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.1.3](https://github.com/sivchari/rask/compare/v0.1.2...v0.1.3) - 2026-08-03
+- fix: readiness error keeps the real cause when the deadline fires mid-request by @sivchari in https://github.com/sivchari/rask/pull/5
+- ci: stop parallel goreleaser runs from splitting one tag into two releases by @sivchari in https://github.com/sivchari/rask/pull/7
+
 ## [v0.1.2](https://github.com/sivchari/rask/compare/v0.1.1...v0.1.2) - 2026-08-03
 - ci: release via goreleaser by @sivchari in https://github.com/sivchari/rask/pull/3
 - ci: darwin release via parallel goreleaser config by @sivchari in https://github.com/sivchari/rask/pull/4
