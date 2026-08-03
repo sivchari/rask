@@ -48,7 +48,13 @@ func waitHTTPOK(ctx context.Context, client *http.Client, url string) error {
 		if err != nil {
 			lastErr = err
 		} else if resp, err := client.Do(req); err != nil {
-			lastErr = err
+			// A request aborted because ctx is already done says nothing
+			// the returned ctx.Err() doesn't; keeping the last
+			// substantive error (say "unexpected status 503") is what
+			// tells the caller why the endpoint never became healthy.
+			if lastErr == nil || ctx.Err() == nil {
+				lastErr = err
+			}
 		} else {
 			status := resp.StatusCode
 			_ = resp.Body.Close()
