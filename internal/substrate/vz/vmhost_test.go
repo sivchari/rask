@@ -3,9 +3,13 @@
 package vz
 
 import (
+	"bytes"
 	"context"
+	"strings"
 	"testing"
 	"time"
+
+	cvz "github.com/Code-Hex/vz/v3"
 )
 
 // runRecoverableTimeout bounds how long these tests wait for cancel to
@@ -72,5 +76,44 @@ func TestRunRecoverable_NoPanicDoesNotCancel(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("runRecoverable called cancel even though fn did not panic")
 	default:
+	}
+}
+
+// TestHandleVMStateChange is the regression test for the silent vm-host
+// death investigated during this session: a vm-host process could
+// disappear with zero trace in vm-host.log because nothing logged what vz
+// reported (or failed to report) about the VM's state. handleVMStateChange
+// must log every transition it is given — terminal or not — and must only
+// return a non-nil error for the two terminal states (Stopped/Error).
+func TestHandleVMStateChange(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		state   cvz.VirtualMachineState
+		wantErr bool
+	}{
+		{"running is not terminal", cvz.VirtualMachineStateRunning, false},
+		{"paused is not terminal", cvz.VirtualMachineStatePaused, false},
+		{"starting is not terminal", cvz.VirtualMachineStateStarting, false},
+		{"stopped is terminal", cvz.VirtualMachineStateStopped, true},
+		{"error is terminal", cvz.VirtualMachineStateError, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var buf bytes.Buffer
+
+			err := handleVMStateChange(&buf, tt.state)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("handleVMStateChange(%v) error = %v, wantErr %v", tt.state, err, tt.wantErr)
+			}
+
+			if !strings.Contains(buf.String(), "vz: virtual machine state changed to") {
+				t.Errorf("handleVMStateChange(%v) did not log the transition to w, got %q", tt.state, buf.String())
+			}
+		})
 	}
 }

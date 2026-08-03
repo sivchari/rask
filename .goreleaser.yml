@@ -89,3 +89,4 @@ changelog:
 
 release:
   use_existing_draft: true
+  mode: append

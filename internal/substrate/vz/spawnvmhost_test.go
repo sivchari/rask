@@ -3,7 +3,9 @@
 package vz
 
 import (
+	"os"
 	"os/exec"
+	"syscall"
 	"testing"
 )
 
@@ -47,5 +49,55 @@ func TestProcessRelease_MustCapturePidBeforeCalling(t *testing.T) {
 
 	if pidBeforeRelease == -1 {
 		t.Fatal("pid captured before Release() was already -1, which would defeat this test's own premise")
+	}
+}
+
+// TestSpawnVMHost_DetachesIntoNewSession is the regression test for the
+// silent vm-host death investigated during this session: a healthy vm-host
+// process died ~100s into a cluster's life with zero trace in vm-host.log,
+// correlated with an unrelated sibling background process being killed by
+// an external harness. spawnVMHost originally used only Setpgid, which
+// detaches the new process's *group* but leaves it in its parent's
+// *session* — reachable by that session's own signal delivery (e.g. a
+// controlling terminal hanging up) for the rest of its life, not just at
+// spawn time. Setsid must be used instead, which makes the child both
+// session leader and process group leader of a brand new session.
+//
+// This spawns a real child process (mirroring spawnVMHost's own SysProcAttr,
+// without exercising spawnVMHost itself, which shells out to
+// os.Executable() and is not a substitutable target for a unit test — see
+// TestProcessRelease_MustCapturePidBeforeCalling's doc comment for the same
+// constraint) and asserts its session id differs from this test process's
+// own, and equals its own pid (the definition of a session leader).
+func TestSpawnVMHost_DetachesIntoNewSession(t *testing.T) {
+	t.Parallel()
+
+	cmd := exec.Command("/bin/sleep", "5")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("starting sleep: %v", err)
+	}
+
+	childPID := cmd.Process.Pid
+
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
+
+	ownSID, err := syscall.Getsid(os.Getpid())
+	if err != nil {
+		t.Fatalf("Getsid(self): %v", err)
+	}
+
+	childSID, err := syscall.Getsid(childPID)
+	if err != nil {
+		t.Fatalf("Getsid(child): %v", err)
+	}
+
+	if childSID == ownSID {
+		t.Fatalf("child session id = %d, same as this test process's session id %d; Setsid should detach the child into its own new session so it is no longer reachable by this session's signal delivery (Setpgid alone leaves the child in this same session — see spawnVMHost's doc comment)", childSID, ownSID)
+	}
+
+	if childSID != childPID {
+		t.Fatalf("child session id = %d, want %d (its own pid): Setsid should make the child the leader of a brand new session", childSID, childPID)
 	}
 }
