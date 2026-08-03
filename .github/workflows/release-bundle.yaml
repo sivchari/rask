@@ -4,8 +4,7 @@ name: release-bundle
 # cmd/bundle-payload) rask binaries: linux/amd64, linux/arm64 and
 # darwin/arm64. Each carries its own component payload embedded, so a
 # fresh `rask create` needs no network access to dl.k8s.io/GitHub/Alpine
-# (see internal/components/bundlepayload and HANDOFF-ebs-bake.md, the
-# handoff contract for haro's EBS-snapshot bake).
+# (see internal/components/bundlepayload).
 #
 # On a tag push, every artifact plus a sha256 checksum is uploaded to that
 # tag's GitHub Release (created if it doesn't exist yet). workflow_dispatch
