@@ -48,17 +48,53 @@ const (
 	// kubelet root, CNI config) lives on the persistent disk, not tmpfs.
 	GuestAgentDataDir = DataMountPoint + "/lib/rask"
 
-	// PrebootDir is where internal/substrate/vz injects
-	// StartOptions.PrebootFiles (see that package's preboot.go), via a
-	// per-cluster cpio archive concatenated onto the template initramfs —
-	// so, unlike everything else under GuestAgentDataDir, these files
-	// exist from the moment the kernel unpacks the initramfs, before
-	// rask-init ever runs, rather than being written at boot time.
-	// Matches substrate.PrebootSubdir's cluster-data-directory-relative
-	// convention (GuestAgentDataDir plays the role of a vz cluster's
-	// "data directory", fixed rather than per-cluster since each cluster
-	// is already its own VM).
+	// PrebootDir is StartOptions.PrebootFiles' documented, external,
+	// in-guest destination (see substrate.PrebootSubdir's doc comment for
+	// the absolute-path formula a caller like fjord computes) — but
+	// rask-init never writes anything there directly during boot; see
+	// PrebootStagingDir for where the content actually lands first, and
+	// why.
 	PrebootDir = GuestAgentDataDir + "/preboot"
+
+	// PrebootStagingDir is where internal/substrate/vz's preboot overlay
+	// cpio (see that package's preboot.go) actually places
+	// StartOptions.PrebootFiles content, concatenated onto the template
+	// initramfs so it exists from the moment the kernel unpacks the
+	// initramfs, before rask-init ever runs.
+	//
+	// It is NOT PrebootDir itself: PrebootDir sits under GuestAgentDataDir
+	// (i.e. under DataMountPoint, "/var"), which cmd/rask-init's
+	// formatAndMountDataDisk mounts the per-cluster ext4 data disk over —
+	// well after the initramfs (and its preboot overlay) is already
+	// unpacked into the tmpfs root. Mounting over /var would silently
+	// shadow whatever the overlay placed at PrebootDir, standard Unix
+	// mount semantics, making every preboot file invisible by the time
+	// bootstrap.Boot (and anything it launches, e.g. a kube-apiserver
+	// --apiserver-arg referencing one) actually runs — found while wiring
+	// StartOptions.ExtraAPIServerArgs through to vz, since that is the
+	// first caller that would ever have actually opened a file under
+	// PrebootDir. rask-init copies this staging directory's content into
+	// PrebootDir once the data disk is mounted (see cmd/rask-init's
+	// copyPrebootFiles), so PrebootDir's own external contract still
+	// resolves correctly for a caller like fjord.
+	PrebootStagingDir = "/opt/rask/preboot"
+
+	// ClusterConfigPath is where internal/substrate/vz's cluster-config
+	// overlay cpio places a small JSON-encoded internal/guestconfig.Config,
+	// for rask-init to read at boot: StartOptions fields
+	// (ExtraAPIServerArgs, CoreDNSImage) that don't fit as a single kernel
+	// command-line token the way ClusterName/BootTimeUnixNano do (see
+	// internal/guestinit/bootparam.go).
+	ClusterConfigPath = "/opt/rask/cluster-config.json"
+
+	// ImagesDir is where internal/substrate/vz's images overlay cpio
+	// places each host-prefetched cluster image's docker-save style tar
+	// archive (see internal/imagebundle), for rask-init to import into the
+	// guest's own containerd once it comes up — mirroring
+	// internal/substrate/hostproc.Runtime's importCachedImages, adapted
+	// for a guest with no host-reachable containerd socket of its own to
+	// dial from outside (see vz's LoadImages doc comment for that gap).
+	ImagesDir = "/opt/rask/images"
 )
 
 // Paths returns the components.Paths pointing at every binary's fixed

@@ -206,6 +206,32 @@ func formatAndMountDataDisk() error {
 	return nil
 }
 
+// copyPrebootFiles copies internal/substrate/vz's preboot overlay content
+// (staged at guestlayout.PrebootStagingDir — see that constant's doc
+// comment for why not directly at guestlayout.PrebootDir) into
+// guestlayout.PrebootDir, once the per-cluster data disk is mounted at
+// DataMountPoint. Must run after formatAndMountDataDisk and before runBoot:
+// PrebootDir sits under DataMountPoint, so mounting the disk there hides
+// whatever the initramfs's preboot overlay placed at PrebootDir directly
+// (standard Unix mount shadowing) — PrebootStagingDir survives that mount
+// because it lives outside DataMountPoint entirely, and this copies its
+// content into the now-visible PrebootDir before anything (e.g. a
+// kube-apiserver --apiserver-arg referencing a preboot file) needs it.
+//
+// A no-op if nothing was staged — the overwhelmingly common case of a
+// "rask create" with no --preboot-file.
+func copyPrebootFiles() error {
+	if _, err := os.Stat(guestlayout.PrebootStagingDir); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+
+		return fmt.Errorf("stat %s: %w", guestlayout.PrebootStagingDir, err)
+	}
+
+	return copyTree(guestlayout.PrebootStagingDir, guestlayout.PrebootDir)
+}
+
 // setGuestPath sets PATH in rask-init's own process environment so every
 // child process bootstrap.Supervisor launches with a nil ProcessSpec.Env
 // (which os/exec resolves against the calling process's environment)

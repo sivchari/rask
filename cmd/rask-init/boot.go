@@ -12,6 +12,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/sivchari/rask/internal/bootstrap"
+	"github.com/sivchari/rask/internal/guestconfig"
 	"github.com/sivchari/rask/internal/guestlayout"
 	"github.com/sivchari/rask/internal/manifests"
 	"github.com/sivchari/rask/internal/store/kine"
@@ -54,26 +55,57 @@ import (
 // guest's own HTTP healthz from outside and stops the VM if it never
 // answers — it never touches this guest's internal process-lifetime
 // context at all, so it can't have this failure mode).
-func runBoot(ctx context.Context, clusterName string) (*bootstrap.Result, error) {
+//
+// guestCfg is what internal/substrate/vz staged for this cluster via its
+// cluster-config overlay (see internal/guestconfig's package doc):
+// guestCfg.ExtraAPIServerArgs is passed straight through to
+// bootstrap.Config.ExtraAPIServerArgs, and guestCfg.CoreDNSImage overrides
+// which CoreDNS image applyManifests applies.
+//
+// Concurrently with bootstrap.Boot, importPrefetchedImages imports whatever
+// internal/substrate/vz's images overlay shipped into
+// guestlayout.ImagesDir into this guest's own containerd, so
+// applyManifests' CoreDNS/local-path-provisioner pods (and every pod
+// sandbox's pause image) find them already present instead of pulling from
+// a registry — mirroring internal/substrate/hostproc.Start's identical
+// concurrent-with-Boot import. Waited for (not folded into the
+// bootstrap.Boot call itself) before applyManifests runs, for the same
+// reason hostproc.Start's own imagesDone channel is waited for before its
+// own applyManifests call: it must not race writes into
+// dataDir/containerd with bootstrap.Boot's own containerd bring-up, but
+// applyManifests scheduling CoreDNS's pod before the import finishes would
+// defeat the whole optimization.
+func runBoot(ctx context.Context, clusterName string, guestCfg guestconfig.Config) (*bootstrap.Result, error) {
 	dataDir := guestlayout.GuestAgentDataDir
 	paths := guestlayout.Paths()
 
 	datastore := kine.New(paths.Kine, filepath.Join(dataDir, "kine"))
 
+	imagesDone := make(chan struct{})
+
+	go func() {
+		defer close(imagesDone)
+		importPrefetchedImages(ctx, containerdSocketPath(dataDir))
+	}()
+
 	result, err := bootstrap.Boot(ctx, bootstrap.Config{
-		ClusterName: clusterName,
-		DataDir:     dataDir,
-		NodeIP:      guestIP,
-		Paths:       paths,
-		Datastore:   datastore,
+		ClusterName:        clusterName,
+		DataDir:            dataDir,
+		NodeIP:             guestIP,
+		Paths:              paths,
+		Datastore:          datastore,
+		ExtraAPIServerArgs: guestCfg.ExtraAPIServerArgs,
 	})
+
+	<-imagesDone
+
 	if err != nil {
 		dumpComponentLogs(dataDir)
 
 		return nil, fmt.Errorf("rask-init: %w", err)
 	}
 
-	if err := applyManifests(ctx, result.AdminKubeconfigPath); err != nil {
+	if err := applyManifests(ctx, result.AdminKubeconfigPath, coreDNSImageOrDefault(guestCfg.CoreDNSImage)); err != nil {
 		result.Supervisor.Stop()
 		_ = datastore.Stop(context.Background())
 		dumpComponentLogs(dataDir)
@@ -82,6 +114,30 @@ func runBoot(ctx context.Context, clusterName string) (*bootstrap.Result, error)
 	}
 
 	return result, nil
+}
+
+// containerdSocketPath is the socket internal/bootstrap/config.go's
+// writeContainerdConfig configures this cluster's containerd instance to
+// listen on, reconstructed the same way
+// internal/substrate/hostproc.Runtime.containerdSocketPath does (bootstrap
+// exposes no accessor for it — both substrates independently derive it
+// from the same dataDir/"containerd"/"containerd.sock" layout
+// writeContainerdConfig actually writes).
+func containerdSocketPath(dataDir string) string {
+	return filepath.Join(dataDir, "containerd", "containerd.sock")
+}
+
+// coreDNSImageOrDefault returns img if set, else manifests.CoreDNSImage —
+// the same zero-value convention every other CoreDNSImage override in this
+// codebase uses (substrate.StartOptions.CoreDNSImage,
+// internal/guestconfig.Config.CoreDNSImage,
+// internal/substrate/hostproc's own coreDNSImage helper).
+func coreDNSImageOrDefault(img string) string {
+	if img != "" {
+		return img
+	}
+
+	return manifests.CoreDNSImage
 }
 
 // dumpComponentLogs prints the tail of every component's log file
@@ -134,7 +190,7 @@ func dumpComponentLogs(dataDir string) {
 // differs enough (hostproc is a separate CLI process; this runs inline in
 // rask-init's own boot sequence) that a shared function would need extra
 // parameters for no real duplication savings.
-func applyManifests(ctx context.Context, kubeconfigPath string) error {
+func applyManifests(ctx context.Context, kubeconfigPath, coreDNSImage string) error {
 	restConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 	if err != nil {
 		return fmt.Errorf("building rest.Config: %w", err)
@@ -147,12 +203,7 @@ func applyManifests(ctx context.Context, kubeconfigPath string) error {
 
 	g, gctx := errgroup.WithContext(ctx)
 
-	// The vz guest boot path always uses rask's default CoreDNS image:
-	// StartOptions.CoreDNSImage is not yet plumbed from the host's
-	// Runtime.Start into this guest (see internal/substrate/vz.Runtime.Start's
-	// doc comment for the full list of StartOptions fields vz does not
-	// support yet).
-	g.Go(func() error { return manifests.ApplyCoreDNS(gctx, clientset, manifests.CoreDNSImage) })
+	g.Go(func() error { return manifests.ApplyCoreDNS(gctx, clientset, coreDNSImage) })
 	g.Go(func() error { return manifests.ApplyLocalPathProvisioner(gctx, dyn, mapper) })
 
 	if err := g.Wait(); err != nil {

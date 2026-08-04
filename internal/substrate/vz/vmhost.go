@@ -76,20 +76,51 @@ func RunVMHost(ctx context.Context, homeDir, name string) error {
 		return err
 	}
 
-	// Overlay any files Runtime.Start staged (StartOptions.PrebootFiles)
-	// onto the shared template initramfs as a second, per-cluster cpio
-	// archive, so they land in the guest filesystem before rask-init (and
-	// everything it launches) ever runs. Skipped entirely — reusing the
-	// shared template path unmodified — when nothing was staged, the
-	// overwhelmingly common case.
+	// Overlay everything Runtime.Start staged for this cluster (opts.
+	// PrebootFiles, ExtraAPIServerArgs/CoreDNSImage, ComponentDir) plus
+	// whatever Create already prefetched into the shared image cache, onto
+	// the shared template initramfs as a second, per-cluster cpio archive,
+	// so it all lands in the guest filesystem before rask-init (and
+	// everything it launches) ever runs. Each builder returns a
+	// zero-length slice when it has nothing to add (no --preboot-file, no
+	// --apiserver-arg/--coredns-image, no --component-dir, no cached
+	// images), so concatenation is skipped entirely — reusing the shared
+	// template path unmodified — in the common case of a plain
+	// "rask create" with none of these set.
+	clusterCfg, err := loadStagedClusterConfig(dataDir)
+	if err != nil {
+		return err
+	}
+
 	prebootCpio, err := buildPrebootCpio(dataDir)
 	if err != nil {
 		return err
 	}
 
-	if len(prebootCpio) > 0 {
+	clusterConfigCpio, err := buildClusterConfigCpio(clusterCfg)
+	if err != nil {
+		return err
+	}
+
+	componentCpio, err := buildComponentOverlayCpio(dataDir)
+	if err != nil {
+		return err
+	}
+
+	imagesCpio, err := buildImagesOverlayCpio(homeDir, clusterCfg.CoreDNSImage)
+	if err != nil {
+		return err
+	}
+
+	extra := make([]byte, 0, len(prebootCpio)+len(clusterConfigCpio)+len(componentCpio)+len(imagesCpio))
+	extra = append(extra, prebootCpio...)
+	extra = append(extra, clusterConfigCpio...)
+	extra = append(extra, componentCpio...)
+	extra = append(extra, imagesCpio...)
+
+	if len(extra) > 0 {
 		combinedPath := filepath.Join(dataDir, "initramfs-combined.cpio")
-		if err := concatInitramfs(combinedPath, initramfsPath, prebootCpio); err != nil {
+		if err := concatInitramfs(combinedPath, initramfsPath, extra); err != nil {
 			return err
 		}
 

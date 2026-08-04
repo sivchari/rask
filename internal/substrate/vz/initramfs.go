@@ -23,7 +23,7 @@ import (
 // file at cacheDir/vz-initramfs-template-<version>.cpio is otherwise reused
 // forever, so a version that silently went stale would boot a stale guest
 // without any error.
-const templateInitramfsVersion = "v12"
+const templateInitramfsVersion = "v14"
 
 // buildTemplateInitramfs builds (or returns the cached path to) the
 // initramfs shared by every rask cluster on this host: rask-init as /init,

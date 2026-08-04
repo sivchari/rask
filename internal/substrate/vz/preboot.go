@@ -18,7 +18,10 @@ import (
 // buildPrebootCpio builds a small cpio archive containing every file
 // Runtime.Start staged under dataDir/substrate.PrebootSubdir (see
 // substrate.StagePrebootFiles), placed at their guest-side destination
-// under guestlayout.PrebootDir. It returns a zero-length (but non-nil)
+// under guestlayout.PrebootStagingDir — NOT guestlayout.PrebootDir itself;
+// see that constant's doc comment for why (cmd/rask-init's
+// copyPrebootFiles is what moves this staging content into PrebootDir,
+// once the data disk is mounted). It returns a zero-length (but non-nil)
 // slice if nothing was staged, so a caller can skip initramfs concatenation
 // entirely in the overwhelmingly common case of no preboot files by
 // checking len() rather than a nil archive.
@@ -39,7 +42,7 @@ func buildPrebootCpio(dataDir string) ([]byte, error) {
 	}
 
 	w := newCpioWriter()
-	guestPrefix := strings.TrimPrefix(guestlayout.PrebootDir, "/")
+	guestPrefix := strings.TrimPrefix(guestlayout.PrebootStagingDir, "/")
 
 	err = filepath.WalkDir(prebootDir, func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
