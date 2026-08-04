@@ -24,7 +24,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/sivchari/rask/internal/guestconfig"
 	"github.com/sivchari/rask/internal/guestinit"
+	"github.com/sivchari/rask/internal/guestlayout"
 )
 
 func main() {
@@ -76,6 +78,13 @@ func main() {
 
 	fmt.Printf("RASK-INIT-DATA-DISK-READY t=%s\n", time.Since(boot))
 
+	// Must run after formatAndMountDataDisk: see copyPrebootFiles' doc
+	// comment for why guestlayout.PrebootDir is only visible once the data
+	// disk is mounted over DataMountPoint.
+	if err := copyPrebootFiles(); err != nil {
+		fatalf("staging preboot files: %v", err)
+	}
+
 	setGuestPath()
 
 	netStart := time.Now()
@@ -92,9 +101,18 @@ func main() {
 	// testing, disabled at the user's explicit direction). Only arm64
 	// guest images work for now.
 
+	// guestCfg carries StartOptions fields internal/substrate/vz has no
+	// other transport for (see internal/guestconfig's package doc). A
+	// missing file (the common case: no --apiserver-arg/--coredns-image
+	// was passed) is not an error — Load returns a zero Config.
+	guestCfg, err := guestconfig.Load(guestlayout.ClusterConfigPath)
+	if err != nil {
+		fatalf("loading cluster config: %v", err)
+	}
+
 	bootStart := time.Now()
 
-	result, err := runBoot(context.Background(), params.ClusterName)
+	result, err := runBoot(context.Background(), params.ClusterName, guestCfg)
 	if err != nil {
 		fmt.Printf("RASK-INIT-BOOT-FAILED t=%s err=%v\n", time.Since(bootStart), err)
 		serveAgent(nil) // still serve /healthz (always 503) so the host's boot-timeout path gets a clean connection-refused-free signal instead of hanging.

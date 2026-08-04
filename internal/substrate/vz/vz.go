@@ -97,22 +97,48 @@ func (r *Runtime) diskPath(name string) string {
 // internal/substrate/hostproc.Create doesn't: a failed Create should leave
 // no trace that would block a retried "rask create".
 //
-// opts.ComponentDir is rejected with a clear error if set — see
-// Start's doc comment for why a --component-dir override has no vz
-// equivalent yet.
+// If opts.ComponentDir is set, it is validated the same way
+// internal/substrate/hostproc.Create validates it (via
+// components.LocalDirSource) — the shared template initramfs itself is
+// never rebuilt for it (still always the default binaries); Start instead
+// layers a small per-cluster overlay onto it at boot (see
+// componentoverride.go).
+//
+// Concurrently with both of the above, every image the cluster's default
+// manifest bundle needs (or opts.CoreDNSImage, if set) is prefetched into a
+// host-wide cache — see imageprefetch.go — mirroring
+// internal/substrate/hostproc.Create's identical prefetch. Pure
+// best-effort, like hostproc's: a failure here never fails Create.
 func (r *Runtime) Create(ctx context.Context, name string, opts substrate.StartOptions) error {
 	if embedded.IsPlaceholder() {
 		return errors.New("vz: internal/substrate/vz/embedded/rask-init is still the placeholder: run `make build-rask-init` first")
 	}
 
-	if opts.ComponentDir != "" {
-		return errors.New("vz: --component-dir is not supported by the vz substrate yet (see Start's doc comment); the shared template initramfs every vz cluster boots from is built once per host, not per cluster, so a per-cluster component override needs a per-cluster initramfs — not yet implemented")
-	}
-
 	cache := components.DefaultCache(filepath.Join(r.homeDir, "cache"))
 
-	if _, err := buildTemplateInitramfs(ctx, cache); err != nil {
-		return fmt.Errorf("vz: preparing template initramfs: %w", err)
+	imagesDone := make(chan struct{})
+
+	go func() {
+		defer close(imagesDone)
+		prefetchImages(ctx, r.homeDir, opts.CoreDNSImage)
+	}()
+
+	_, tmplErr := buildTemplateInitramfs(ctx, cache)
+
+	var componentErr error
+
+	if opts.ComponentDir != "" {
+		_, componentErr = components.NewLocalDirSource(opts.ComponentDir, cache).Resolve(ctx, components.DefaultK8sVersion, components.ARM64)
+	}
+
+	<-imagesDone
+
+	if tmplErr != nil {
+		return fmt.Errorf("vz: preparing template initramfs: %w", tmplErr)
+	}
+
+	if componentErr != nil {
+		return fmt.Errorf("vz: validating --component-dir: %w", componentErr)
 	}
 
 	return nil
@@ -136,23 +162,35 @@ func (r *Runtime) Create(ctx context.Context, name string, opts substrate.StartO
 // cleanup still finds and terminates the process even if the pidfile write
 // itself is what failed.
 //
-// Most of opts is not honored yet: extra API audiences and prebaked-seed
-// selection are threaded through the hostproc substrate (see
-// internal/substrate/hostproc.Runtime.Start); vz's guest-side boot path does
-// not yet plumb Config.ExtraAPIAudiences or Config.SeedPath through to the
-// in-guest bootstrap.Boot call, and internal/prebake's seed-build path
-// (which extracts a seed's source file from a stopped cluster's host
-// filesystem) has no vz equivalent yet either, since a vz cluster's
-// datastore lives inside the guest VM's own disk, not on a host-readable
-// path. Those two are silently ignored, an existing, documented gap.
+// Extra API audiences and prebaked-seed selection are still not honored:
+// vz's guest-side boot path does not yet plumb Config.ExtraAPIAudiences or
+// Config.SeedPath through to the in-guest bootstrap.Boot call, and
+// internal/prebake's seed-build path (which extracts a seed's source file
+// from a stopped cluster's host filesystem) has no vz equivalent yet
+// either, since a vz cluster's datastore lives inside the guest VM's own
+// disk, not on a host-readable path. Those two are silently ignored, an
+// existing, documented gap.
 //
-// opts.ExtraAPIServerArgs and opts.CoreDNSImage are new fields with no vz
-// support at all yet and are rejected with a clear error instead of being
-// silently dropped like the two above: unlike a missing TokenReview
-// audience or a slower cold boot (SeedPath), silently ignoring either of
-// these would substitute a caller-specified security-relevant apiserver
-// flag or container image with rask's own default without any visible
-// signal that happened.
+// opts.ExtraAPIServerArgs, opts.CoreDNSImage and opts.ComponentDir ARE now
+// supported:
+//
+//   - ExtraAPIServerArgs and CoreDNSImage are staged host-side as a small
+//     JSON internal/guestconfig.Config (stageClusterConfig, clusterconfig.go)
+//     and read by rask-init at boot from guestlayout.ClusterConfigPath —
+//     the guest has no shared filesystem with the host to pass flags any
+//     other way (see the package doc comment).
+//   - ComponentDir's five override binaries are staged host-side
+//     (stageComponentOverride, componentoverride.go) and layered onto the
+//     shared template initramfs as a second cpio archive at boot
+//     (buildComponentOverlayCpio), rather than rebuilding the (per-host,
+//     not per-cluster) template itself — see that function's doc comment
+//     for why a later cpio entry at the same path safely overwrites the
+//     template's own copy.
+//
+// All three are staged here (this process) and consumed by RunVMHost (a
+// separate process spawnVMHost execs below) exactly like PrebootFiles
+// already were, for the same reason: RunVMHost only shares dataDir with
+// this invocation, not memory.
 //
 // opts.PrebootFiles IS supported: they are staged host-side under
 // r.dataDir(name) (substrate.StagePrebootFiles) and RunVMHost — which,
@@ -163,14 +201,6 @@ func (r *Runtime) Create(ctx context.Context, name string, opts substrate.StartO
 // shared filesystem with the host to read StartOptions.PrebootFiles.Src
 // paths from directly.
 func (r *Runtime) Start(ctx context.Context, name string, opts substrate.StartOptions) (err error) {
-	if len(opts.ExtraAPIServerArgs) > 0 {
-		return errors.New("vz: --apiserver-arg is not supported by the vz substrate yet")
-	}
-
-	if opts.CoreDNSImage != "" {
-		return errors.New("vz: --coredns-image is not supported by the vz substrate yet")
-	}
-
 	// Fail fast, before creating any state or spawning a vm-host process
 	// at all, if a VM is already running elsewhere on this host: without
 	// this, a doomed Start only discovered the conflict once
@@ -216,6 +246,26 @@ func (r *Runtime) Start(ctx context.Context, name string, opts substrate.StartOp
 	// preboot file needs to already be on disk.
 	if err = substrate.StagePrebootFiles(r.dataDir(name), opts.PrebootFiles); err != nil {
 		return fmt.Errorf("vz: %w", err)
+	}
+
+	// Same reasoning as StagePrebootFiles above: both must be on disk
+	// before spawnVMHost's RunVMHost process starts building the combined
+	// initramfs.
+	if err = stageClusterConfig(r.dataDir(name), opts); err != nil {
+		return fmt.Errorf("vz: %w", err)
+	}
+
+	if opts.ComponentDir != "" {
+		cache := components.DefaultCache(filepath.Join(r.homeDir, "cache"))
+
+		paths, resolveErr := components.NewLocalDirSource(opts.ComponentDir, cache).Resolve(ctx, components.DefaultK8sVersion, components.ARM64)
+		if resolveErr != nil {
+			return fmt.Errorf("vz: resolving --component-dir: %w", resolveErr)
+		}
+
+		if err = stageComponentOverride(r.dataDir(name), paths); err != nil {
+			return fmt.Errorf("vz: %w", err)
+		}
 	}
 
 	pid, err = r.spawnVMHost(name)
