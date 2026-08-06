@@ -77,6 +77,13 @@ func (r *Runtime) cacheDir() string {
 	return filepath.Join(r.homeDir, "cache")
 }
 
+// PrebootPath implements substrate.Runtime: hostproc has no VM boundary, so
+// the path a component it launches reads a preboot file from is simply
+// where StagePrebootFiles wrote it, on the host.
+func (r *Runtime) PrebootPath(name, dest string) string {
+	return substrate.PrebootFilePath(filepath.Join(r.dataDir(name), substrate.PrebootSubdir), dest)
+}
+
 // SeedSourcePath returns the path to the kine SQLite file backing name's
 // datastore, for internal/prebake to copy out as a seed snapshot after
 // Stop. Stop must be called first (not just Create/Start): kine only

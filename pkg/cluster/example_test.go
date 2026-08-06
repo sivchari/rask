@@ -2,7 +2,6 @@ package cluster_test
 
 import (
 	"fmt"
-	"path/filepath"
 
 	"github.com/sivchari/rask/pkg/cluster"
 )
@@ -19,19 +18,23 @@ func Example_fjordIntegration() {
 		return
 	}
 
-	// A preboot file's absolute destination is
-	// <cluster-data-dir>/preboot/<dest> (see cluster.PrebootFile's doc
-	// comment) — computable from the cluster's kubeconfig path, itself
-	// available before Create ever runs.
-	clusterDataDir := filepath.Join(filepath.Dir(provider.KubeConfigPath("haro")), "data")
+	// PrebootPath resolves a PrebootFile's Dest to the path an in-cluster
+	// component must actually read it from, computable before Create ever
+	// runs. Never hand-build this path (e.g. by joining onto
+	// KubeConfigPath's directory): the formula differs by substrate — a
+	// host path on hostproc, an in-guest one on vz — and PrebootPath is the
+	// one place that stays correct for whichever substrate this Provider
+	// ends up using.
+	const clusterName = "haro"
+
 	webhookDest := "auth/webhook.yaml"
-	webhookAbsPath := filepath.Join(clusterDataDir, "preboot", webhookDest)
+	webhookPath := provider.PrebootPath(clusterName, webhookDest)
 
 	opts := cluster.Options{
 		Wait:         cluster.WaitCoreDNS,
 		ComponentDir: "/var/lib/fjord/eksd/kubernetes-server/bin",
 		ExtraAPIServerArgs: []string{
-			"authentication-token-webhook-config-file=" + webhookAbsPath,
+			"authentication-token-webhook-config-file=" + webhookPath,
 		},
 		PrebootFiles: []cluster.PrebootFile{
 			{Src: "/var/lib/fjord/authn/webhook-kubeconfig.yaml", Dest: webhookDest},
@@ -40,7 +43,7 @@ func Example_fjordIntegration() {
 	}
 
 	// A real caller boots the cluster here:
-	//   result, err := provider.Create(ctx, "haro", opts)
+	//   result, err := provider.Create(ctx, clusterName, opts)
 	// Not called in this example: Create needs an actual host to create
 	// real processes/VMs on, which a godoc example must not do as a side
 	// effect of running "go test".

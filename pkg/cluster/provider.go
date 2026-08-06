@@ -182,6 +182,16 @@ func (p *Provider) KubeConfigPath(name string) string {
 	return filepath.Join(internalcluster.Dir(p.homeDir, name), "kubeconfig")
 }
 
+// PrebootPath returns the path an in-cluster component (typically the API
+// server, via Options.ExtraAPIServerArgs) must use to read a file staged
+// with the given PrebootFile Dest. It is the host path on hostproc and the
+// in-guest path on vz, so callers never need to know which substrate is in
+// play. Safe to call before Create: like KubeConfigPath, it only computes a
+// path, never touches the cluster's actual state.
+func (p *Provider) PrebootPath(name, dest string) string {
+	return p.rt.PrebootPath(name, dest)
+}
+
 // KubeConfig returns name's admin kubeconfig content, with its
 // cluster/user/context name rendered per opts.ContextFormat. Errors if the
 // cluster does not exist.

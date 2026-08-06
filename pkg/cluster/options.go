@@ -82,14 +82,16 @@ type Options struct {
 }
 
 // PrebootFile is a single file, copied from the filesystem of the process
-// calling Provider.Create into the new cluster's data directory before any
-// cluster process starts.
+// calling Provider.Create into the new cluster before any cluster process
+// starts.
 //
-// Dest is a slash-separated path relative to the cluster's data directory's
-// "preboot" subdirectory; it may not contain ".." segments or be absolute.
-// Its absolute path (for referencing from an ExtraAPIServerArgs value) is
-// filepath.Join(dataDir, "preboot", Dest), where dataDir is
-// <homeDir>/clusters/<name>/data for the default (hostproc) Provider.
+// Dest is a slash-separated path, substrate-relative rather than
+// filesystem-relative; it may not contain ".." segments or be absolute. Its
+// absolute path — for referencing from an ExtraAPIServerArgs value — is
+// substrate dependent (a host path on hostproc, an in-guest path on vz):
+// call Provider.PrebootPath(name, Dest) rather than assuming either
+// formula, so the same Options value works unchanged regardless of which
+// substrate the Provider ends up using.
 type PrebootFile struct {
 	// Src is a path on the filesystem of the process calling
 	// Provider.Create, readable at Create time.

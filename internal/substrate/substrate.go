@@ -78,18 +78,11 @@ type PrebootFile struct {
 
 // PrebootSubdir is the fixed, cluster-data-directory-relative directory
 // StartOptions.PrebootFiles are staged into, before any cluster process
-// starts. A caller building an ExtraAPIServerArgs/--apiserver-arg value
-// that references a preboot file's destination computes its absolute path
-// as:
-//
-//	filepath.Join(dataDir, PrebootSubdir, dest)
-//
-// where dataDir is the cluster's data directory
-// (<homeDir>/clusters/<name>/data on the hostproc substrate — see
-// internal/cluster.Dir — or the vz substrate's fixed in-guest
-// guestlayout.GuestAgentDataDir, since a vz cluster's data directory is not
-// a host-readable path). For the default host home directory this is, e.g.,
-// ~/.rask/clusters/<name>/data/preboot/<dest>.
+// starts. Prefer Runtime.PrebootPath over recomputing this join by hand —
+// it already resolves to the right formula for whichever substrate is in
+// play (see that method's doc comment); PrebootSubdir itself is exported
+// only because StagePrebootFiles and PrebootFilePath need it as a shared
+// constant.
 const PrebootSubdir = "preboot"
 
 // StagePrebootFiles copies every PrebootFile's Src content to
@@ -141,7 +134,7 @@ func prebootDestPath(prebootDir, dest string) (string, error) {
 		return "", fmt.Errorf("substrate: preboot file dest %q must be a relative path with no \"..\" segments", dest)
 	}
 
-	resolved := filepath.Join(prebootDir, filepath.FromSlash(dest))
+	resolved := PrebootFilePath(prebootDir, dest)
 
 	cleanPrebootDir := filepath.Clean(prebootDir)
 	if resolved != cleanPrebootDir && !strings.HasPrefix(resolved, cleanPrebootDir+string(os.PathSeparator)) {
@@ -149,6 +142,23 @@ func prebootDestPath(prebootDir, dest string) (string, error) {
 	}
 
 	return resolved, nil
+}
+
+// PrebootFilePath joins dest onto baseDir using the exact same join
+// StagePrebootFiles performs to compute where it writes a PrebootFile's
+// content. A Runtime.PrebootPath implementation calls this with its own
+// substrate-specific baseDir (the on-host preboot directory for hostproc,
+// the in-guest one for vz) so its returned path can never drift from where
+// StagePrebootFiles actually writes.
+//
+// Unlike StagePrebootFiles, this performs none of prebootDestPath's
+// validation (a ".." segment, an absolute path, or an empty dest): a
+// Runtime.PrebootPath implementation has no error return to reject one
+// through. Such a dest still resolves to *a* path here — just one
+// StagePrebootFiles refuses to ever write anything to, since it validates
+// independently before reaching this same join.
+func PrebootFilePath(baseDir, dest string) string {
+	return filepath.Join(baseDir, filepath.FromSlash(dest))
 }
 
 // ImageSource is a single container image, as an OCI/docker archive tar
@@ -182,6 +192,17 @@ type Runtime interface {
 
 	// Start boots the cluster instance created by Create.
 	Start(ctx context.Context, name string, opts StartOptions) error
+
+	// PrebootPath returns the path name's in-cluster components (typically
+	// the API server, via a StartOptions.ExtraAPIServerArgs value) must use
+	// to read a file staged under dest by StagePrebootFiles: the on-host
+	// path for hostproc, the in-guest path for vz. dest is joined exactly
+	// as StagePrebootFiles joins it (see PrebootFilePath), without
+	// StagePrebootFiles' own validation — this method has no error return
+	// to reject an invalid dest through, so it still resolves to a path,
+	// just one nothing was ever staged at (see PrebootFilePath's doc
+	// comment).
+	PrebootPath(name, dest string) string
 
 	// Stop shuts the cluster instance down without deleting its state,
 	// so a later Start can resume it.
