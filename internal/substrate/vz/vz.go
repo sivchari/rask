@@ -24,7 +24,6 @@ package vz
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -42,7 +41,6 @@ import (
 	"github.com/sivchari/rask/internal/cluster"
 	"github.com/sivchari/rask/internal/components"
 	"github.com/sivchari/rask/internal/substrate"
-	"github.com/sivchari/rask/internal/substrate/vz/embedded"
 )
 
 // bootTimeout bounds how long Start waits for the guest agent to report
@@ -112,10 +110,6 @@ func (r *Runtime) diskPath(name string) string {
 // internal/substrate/hostproc.Create's identical prefetch. Pure
 // best-effort, like hostproc's: a failure here never fails Create.
 func (r *Runtime) Create(ctx context.Context, name string, opts substrate.StartOptions) error {
-	if embedded.IsPlaceholder() {
-		return errors.New("vz: internal/substrate/vz/embedded/rask-init is still the placeholder: run `make build-rask-init` first")
-	}
-
 	cache := components.DefaultCache(filepath.Join(r.homeDir, "cache"))
 
 	imagesDone := make(chan struct{})

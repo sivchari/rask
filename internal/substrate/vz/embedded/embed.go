@@ -19,5 +19,13 @@ const placeholderMagic = "RASK-INIT-PLACEHOLDER"
 // IsPlaceholder reports whether RaskInitBinary is still the committed
 // placeholder rather than a real cross-compiled binary.
 func IsPlaceholder() bool {
-	return len(RaskInitBinary) < len(placeholderMagic) || string(RaskInitBinary[:len(placeholderMagic)]) == placeholderMagic
+	return isPlaceholderBytes(RaskInitBinary)
+}
+
+// isPlaceholderBytes is IsPlaceholder's logic, factored out so it can be
+// unit-tested directly against arbitrary byte slices instead of only
+// against RaskInitBinary (whose real-vs-placeholder content depends on
+// whether `make build-rask-init` happened to run before the test).
+func isPlaceholderBytes(data []byte) bool {
+	return len(data) < len(placeholderMagic) || string(data[:len(placeholderMagic)]) == placeholderMagic
 }

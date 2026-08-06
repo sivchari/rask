@@ -13,6 +13,14 @@
 // fresh before every `make build`, overwriting the placeholder in the
 // working tree; never commit that overwrite (restore with
 // `git checkout -- internal/substrate/vz/embedded/rask-init`).
-// IsPlaceholder detects the placeholder at runtime and refuses to boot a
-// VM from it.
+// IsPlaceholder detects the placeholder at runtime.
+//
+// Callers that actually need a real rask-init binary (internal/substrate/vz's
+// buildTemplateInitramfs) never read RaskInitBinary directly for that
+// purpose — they call Resolve, which falls back through $RASK_INIT_BINARY,
+// then RaskInitBinary if it isn't a placeholder, then a verified release
+// download cached under a components.Cache, so a Go module consumer whose
+// build never ran `make build-rask-init` (e.g. fjord) still boots a real
+// guest as long as it depends on an exact tagged rask release. See
+// Resolve's doc comment for the full order and its final, actionable error.
 package embedded

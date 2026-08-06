@@ -62,6 +62,26 @@ builds:
       pre:
         - go run ./cmd/bundle-payload -target linux/arm64
 
+  # rask-init (cmd/rask-init) is the vz substrate's guest PID 1: always
+  # linux/arm64 regardless of host OS/arch, since it only ever runs inside a
+  # macOS host's vz VM (see internal/substrate/vz). Published as its own
+  # release asset because internal/substrate/vz/embedded's go:embed only
+  # captures whatever binary is at that path when a *rask* binary is built
+  # (a placeholder in a read-only Go module cache) — internal/substrate/vz's
+  # runtime fallback downloads this asset for module consumers whose own
+  # build never had a chance to run `make build-rask-init` first.
+  - id: rask-init
+    main: ./cmd/rask-init
+    binary: rask-init
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - arm64
+    ldflags:
+      - -s -w
+
 archives:
   - id: rask
     formats: ['tar.gz']
@@ -80,6 +100,14 @@ archives:
     ids:
       - rask-bundled-amd64
       - rask-bundled-arm64
+
+  - id: rask-init
+    formats: ['tar.gz']
+    name_template: "rask-init_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+    ids:
+      - rask-init
 
 checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
