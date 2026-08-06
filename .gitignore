@@ -32,3 +32,4 @@ test/benchmark/*.md
 # tracked.
 /internal/components/bundlepayload/payload/*
 !/internal/components/bundlepayload/payload/.gitkeep
+PROGRESS-*.md

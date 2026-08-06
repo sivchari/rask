@@ -25,7 +25,7 @@ func TestBuildPrebootCpio_NoStagedFilesReturnsEmptyArchive(t *testing.T) {
 	}
 }
 
-func TestBuildPrebootCpio_IncludesStagedFilesAtGuestPrebootDir(t *testing.T) {
+func TestBuildPrebootCpio_IncludesStagedFilesAtGuestPrebootStagingDir(t *testing.T) {
 	t.Parallel()
 
 	dataDir := t.TempDir()
@@ -50,7 +50,7 @@ func TestBuildPrebootCpio_IncludesStagedFilesAtGuestPrebootDir(t *testing.T) {
 
 	extracted := extractArchiveForTest(t, data)
 
-	guestRelPath := strings.TrimPrefix(guestlayout.PrebootDir, "/") + "/auth/webhook.yaml"
+	guestRelPath := strings.TrimPrefix(guestlayout.PrebootStagingDir, "/") + "/auth/webhook.yaml"
 
 	got, err := os.ReadFile(filepath.Join(extracted, guestRelPath))
 	if err != nil {
