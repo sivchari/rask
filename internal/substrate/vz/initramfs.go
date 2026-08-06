@@ -46,14 +46,20 @@ const templateInitramfsVersion = "v15"
 // internal/bootstrap.Boot completely unmodified is both simpler and
 // consistent with hostproc's proven implementation.
 func buildTemplateInitramfs(ctx context.Context, cache *components.Cache) (string, error) {
-	if embedded.IsPlaceholder() {
-		return "", fmt.Errorf("vz: internal/substrate/vz/embedded/rask-init is still the placeholder: run `make build-rask-init` first")
-	}
-
 	cachePath := filepath.Join(cache.Dir(), fmt.Sprintf("vz-initramfs-template-%s.cpio", templateInitramfsVersion))
 
 	if _, err := os.Stat(cachePath); err == nil {
 		return cachePath, nil
+	}
+
+	// Resolved here, not at the top of this function: a warm cachePath
+	// above already has rask-init baked in, so an already-built template
+	// initramfs must never require a real rask-init binary (env var,
+	// build, or download) to be available at all — see embedded.Resolve's
+	// doc comment for the fallback chain this triggers when it isn't.
+	raskInitBinary, err := embedded.Resolve(ctx, cache.Dir())
+	if err != nil {
+		return "", fmt.Errorf("vz: resolving rask-init: %w", err)
 	}
 
 	paths, err := cache.Ensure(ctx, components.DefaultK8sVersion, components.ARM64)
@@ -93,7 +99,7 @@ func buildTemplateInitramfs(ctx context.Context, cache *components.Cache) (strin
 
 	w := newCpioWriter()
 
-	if err := w.WriteFile("init", 0o755, embedded.RaskInitBinary); err != nil {
+	if err := w.WriteFile("init", 0o755, raskInitBinary); err != nil {
 		return "", fmt.Errorf("vz: writing /init: %w", err)
 	}
 

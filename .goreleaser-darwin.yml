@@ -21,6 +21,12 @@ builds:
     ldflags:
       - -s -w
     hooks:
+      pre:
+        # internal/substrate/vz/embedded go:embeds cmd/rask-init verbatim;
+        # without cross-compiling it fresh here first, this build would
+        # ship the committed placeholder instead (see that package's doc
+        # comment) — the exact bug this hook exists to prevent.
+        - make build-rask-init
       post:
         # Ad-hoc signing with the virtualization entitlement; required for
         # Virtualization.framework APIs. Gatekeeper may still prompt on
@@ -42,6 +48,9 @@ builds:
       - -s -w
     hooks:
       pre:
+        # Same reasoning as rask-darwin's pre hook above: bundle-payload
+        # stages the network component payload, not rask-init.
+        - make build-rask-init
         - go run ./cmd/bundle-payload -target darwin/arm64
       post:
         - codesign --entitlements vz.entitlements -s - -f {{ .Path }}
