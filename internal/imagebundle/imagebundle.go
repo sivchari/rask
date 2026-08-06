@@ -12,6 +12,12 @@
 // network round trip at all. This is what lets a substrate's Start import
 // a cluster's images from local disk instead of kubelet/containerd pulling
 // them from a registry once the corresponding pod is scheduled.
+//
+// On a bundled binary, Cache additionally resolves a ref from this build's
+// embedded payload before ever touching the network (see Cache.Lookup's
+// installFromPayload) — cmd/bundle-payload stages the RequiredImages set
+// into that payload via this same Cache, so a bundled "rask pull" followed
+// by "rask create" needs no registry access at all.
 package imagebundle
 
 import (
@@ -20,19 +26,53 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/google/go-containerregistry/pkg/crane"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/sivchari/rask/internal/components"
+	"github.com/sivchari/rask/internal/components/bundlepayload"
+	"github.com/sivchari/rask/internal/manifests"
 )
+
+// installImagesFromPayload is a package variable, not a direct call to
+// bundlepayload.InstallImages, so this package's own tests can substitute a
+// fake payload installer: a real embedded payload only exists in a binary
+// compiled with `go build -tags bundle` (see bundlepayload's package doc),
+// which unit tests never do, so there is no other way to exercise "an image
+// already staged in the payload is found without a network pull" here.
+var installImagesFromPayload = bundlepayload.InstallImages
+
+// RequiredImages returns every container image reference cmd/bundle-payload
+// stages into a bundled binary's payload for the default cluster (no
+// --coredns-image override): components.PauseImage (the CRI sandbox image
+// containerd's own config pins for every pod) plus
+// manifests.RequiredImages(manifests.CoreDNSImage). This is the one place
+// that composes those pins into the ordered ref list actually pulled/
+// staged; a version bump to any of them (components.PauseImage,
+// manifests.CoreDNSImage, or local-path-storage.yaml's own pinned images)
+// changes what this returns with no second place to update.
+//
+// internal/substrate/hostproc and internal/substrate/vz build the same list
+// themselves (their own requiredImages/vzRequiredImages), parameterized by
+// a possible runtime --coredns-image override this function doesn't need to
+// support.
+func RequiredImages() []string {
+	return append([]string{components.PauseImage}, manifests.RequiredImages(manifests.CoreDNSImage)...)
+}
 
 // Cache downloads and caches container images, as docker-save style tar
 // archives, under an architecture-scoped directory tree. A Cache is safe
 // for concurrent use.
 type Cache struct {
 	dir string
+
+	// installPayloadOnce guards installFromPayload: every Lookup/Ensure
+	// call goes through it, but the embedded payload only needs copying
+	// into dir once per Cache instance.
+	installPayloadOnce sync.Once
 }
 
 // NewCache returns a Cache rooted at dir (typically
@@ -67,18 +107,48 @@ func sanitizeRef(ref string) string {
 }
 
 // Lookup returns ref's cached archive path for arch and true if it is
-// already present, without ever fetching it. Callers that must stay off
-// the network on their own critical path (e.g. a substrate's Start, see
-// internal/substrate/hostproc's importCachedImages) use this instead of
-// Ensure; prefetching (Ensure/EnsureAll) is expected to have already run
-// earlier (typically during Create).
+// already present, without ever fetching it over the network. Callers that
+// must stay off the network on their own critical path (e.g. a substrate's
+// Start, see internal/substrate/hostproc's importCachedImages) use this
+// instead of Ensure; prefetching (Ensure/EnsureAll) is expected to have
+// already run earlier (typically during Create).
+//
+// Before checking disk, it installs this build's embedded payload images
+// (if any — see installFromPayload) into dir, so a ref the payload already
+// staged is found here too, not just via Ensure. This is local, in-memory
+// to-disk copying, never network I/O, so it doesn't violate Lookup's own
+// "without ever fetching it" contract.
 func (c *Cache) Lookup(ref string, arch components.Arch) (string, bool) {
+	c.installFromPayload()
+
 	path := c.archivePath(ref, arch)
 	if _, err := os.Stat(path); err != nil {
 		return "", false
 	}
 
 	return path, true
+}
+
+// installFromPayload copies every container-image archive this build's
+// embedded payload staged (see bundlepayload.InstallImages) into c.dir,
+// once per Cache instance, so a later Lookup/Ensure call for any of those
+// refs is a pure disk hit with no network round trip at all — mirroring how
+// components.DefaultCache already prefers the embedded payload over the
+// network for component binaries (see that function's doc comment). A
+// container image pull is a multi-request OCI registry exchange, not a
+// single URL fetch, so there is no shared http.RoundTripper seam to
+// intercept the way DefaultCache does; pre-populating the cache directory
+// once, up front, is the equivalent for crane's pull path.
+//
+// A no-op on a build with no embedded payload, or on a payload that never
+// staged any images: bundlepayload.InstallImages already handles both
+// cases by doing nothing and returning nil. Any other error is silently
+// ignored — Ensure's normal network pull is the existing fallback for
+// whatever ref is still missing, exactly as if this didn't run at all.
+func (c *Cache) installFromPayload() {
+	c.installPayloadOnce.Do(func() {
+		_ = installImagesFromPayload(c.dir)
+	})
 }
 
 // Ensure fetches ref for arch into the cache if not already present, and

@@ -18,8 +18,10 @@ datastore instead of replaying bootstrap.
 
 Every release ships one self-contained binary per platform — every
 component it needs (Kubernetes binaries, kine, containerd, runc, the CNI
-plugins) is embedded at build time, so `rask create` never downloads
-anything on first use:
+plugins) **and** every container image its default manifest bundle needs
+(CoreDNS, the CRI pause image, local-path-provisioner) is embedded at build
+time, so `rask create` never downloads anything on first use, not even a
+registry pull:
 
 ```sh
 curl -fLO https://github.com/sivchari/rask/releases/latest/download/rask-bundled_<version>_<os>_<arch>.tar.gz
@@ -30,6 +32,11 @@ chmod +x rask-bundled
 `<os>_<arch>` is one of `linux_amd64`, `linux_arm64` or `darwin_arm64`.
 Verify against the matching `rask_<version>_checksums.txt` /
 `rask_<version>_darwin_checksums.txt` release asset before trusting it.
+
+A rask release pins its Kubernetes version, CoreDNS, the CRI pause image
+and local-path-provisioner together — upgrading rask upgrades all of them
+at once, there is no independent "image version" to track. See
+[HANDOFF-ebs-bake.md](HANDOFF-ebs-bake.md) for the full contract.
 
 Building from source: `make codesign` (macOS, build + sign) or `make
 build` (Linux) produces a plain binary that downloads components on first

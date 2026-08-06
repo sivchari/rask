@@ -137,6 +137,12 @@ func (r *Runtime) Create(ctx context.Context, name string, opts substrate.StartO
 	// importCachedImages finding nothing cached simply falls back to the
 	// pre-existing behavior: kubelet pulls the image itself once the
 	// corresponding pod is scheduled (imagePullPolicy: IfNotPresent).
+	//
+	// On a bundled binary, EnsureAll below resolves every ref this staged
+	// from this build's embedded payload before ever reaching the network
+	// (see internal/imagebundle.Cache.Lookup's installFromPayload) — the
+	// same "payload before network" contract components.DefaultCache
+	// already gives the component-binary download this runs alongside.
 	imagesDone := make(chan struct{})
 
 	go func() {

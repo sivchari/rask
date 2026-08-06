@@ -2,10 +2,17 @@
 // returns for one platform target and writes the raw response bytes plus a
 // manifest.json into internal/components/bundlepayload/payload, in the
 // exact on-disk layout bundlepayload.RoundTripper/Available expect (see
-// bundlepayload.BlobPath/ManifestPath). `go build -tags bundle` then
-// embeds that directory verbatim (fs_bundle.go), giving the resulting rask
-// binary fully offline component resolution for this one target — see
-// internal/components/defaultcache.go for how a running rask picks it up.
+// bundlepayload.BlobPath/ManifestPath). It also fetches every
+// imagebundle.RequiredImages() container image, arch-matched to the
+// target, via internal/imagebundle's own Cache directly into
+// payload/images — the same {arch}/{sanitizedRef}.tar layout
+// bundlepayload.InstallImages later copies out of the embedded payload and
+// internal/imagebundle.Cache.Lookup reads from, so no second on-disk
+// convention exists for images. `go build -tags bundle` then embeds that
+// whole directory verbatim (fs_bundle.go), giving the resulting rask binary
+// fully offline component AND image resolution for this one target — see
+// internal/components/defaultcache.go and internal/imagebundle.Cache for
+// how a running rask picks each of them up.
 //
 // Usage:
 //
@@ -37,6 +44,7 @@ import (
 
 	"github.com/sivchari/rask/internal/components"
 	"github.com/sivchari/rask/internal/components/bundlepayload"
+	"github.com/sivchari/rask/internal/imagebundle"
 )
 
 // target describes one bundle-payload platform: the OS the resulting rask
@@ -108,7 +116,16 @@ func run() error {
 		return err
 	}
 
-	fmt.Fprintf(os.Stderr, "bundle-payload: staged %d URLs for %s (k8s %s, guest=%v) into %s\n", len(urls), *targetFlag, *k8sVersion, tgt.guest, *out)
+	images := imagebundle.RequiredImages()
+
+	fmt.Fprintf(os.Stderr, "bundle-payload: staging %d container images for %s...\n", len(images), *targetFlag)
+
+	imageCache := imagebundle.NewCache(filepath.Join(*out, "payload", "images"))
+	if _, err := imageCache.EnsureAll(ctx, images, tgt.arch); err != nil {
+		return fmt.Errorf("staging images for %s: %w", *targetFlag, err)
+	}
+
+	fmt.Fprintf(os.Stderr, "bundle-payload: staged %d URLs and %d images for %s (k8s %s, guest=%v) into %s\n", len(urls), len(images), *targetFlag, *k8sVersion, tgt.guest, *out)
 
 	return nil
 }
