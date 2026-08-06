@@ -179,21 +179,21 @@ func templateInitramfsKey(raskInitBinary []byte) string {
 	h := sha256.New()
 
 	raskInitSum := sha256.Sum256(raskInitBinary)
-	fmt.Fprintf(h, "rask-init:%x\n", raskInitSum)
+	_, _ = fmt.Fprintf(h, "rask-init:%x\n", raskInitSum)
 
-	fmt.Fprintf(h, "k8s:%s\n", components.DefaultK8sVersion)
-	fmt.Fprintf(h, "kine:%s\n", components.KineVersion)
-	fmt.Fprintf(h, "runc:%s\n", components.RuncVersion)
-	fmt.Fprintf(h, "containerd:%s\n", components.ContainerdVersion)
-	fmt.Fprintf(h, "cni-plugins:%s\n", components.CNIPluginsVersion)
-	fmt.Fprintf(h, "guest-kernel:%s\n", components.GuestKernelKey)
-	fmt.Fprintf(h, "iptables:%s\n", components.IPTablesBundleKey)
-	fmt.Fprintf(h, "e2fsprogs:%s\n", components.E2fsprogsBundleKey)
-	fmt.Fprintf(h, "gcompat:%s\n", components.GCompatBundleKey)
-	fmt.Fprintf(h, "busybox:%s\n", components.BusyboxBundleKey)
+	_, _ = fmt.Fprintf(h, "k8s:%s\n", components.DefaultK8sVersion)
+	_, _ = fmt.Fprintf(h, "kine:%s\n", components.KineVersion)
+	_, _ = fmt.Fprintf(h, "runc:%s\n", components.RuncVersion)
+	_, _ = fmt.Fprintf(h, "containerd:%s\n", components.ContainerdVersion)
+	_, _ = fmt.Fprintf(h, "cni-plugins:%s\n", components.CNIPluginsVersion)
+	_, _ = fmt.Fprintf(h, "guest-kernel:%s\n", components.GuestKernelKey)
+	_, _ = fmt.Fprintf(h, "iptables:%s\n", components.IPTablesBundleKey)
+	_, _ = fmt.Fprintf(h, "e2fsprogs:%s\n", components.E2fsprogsBundleKey)
+	_, _ = fmt.Fprintf(h, "gcompat:%s\n", components.GCompatBundleKey)
+	_, _ = fmt.Fprintf(h, "busybox:%s\n", components.BusyboxBundleKey)
 
-	fmt.Fprintf(h, "modules:%s\n", strings.Join(guestinit.WantedModules, ","))
-	fmt.Fprintf(h, "layout:%s|%s|%s|%s\n", guestlayout.BinDir, guestlayout.CNIBinDir, guestlayout.ModulesDir, guestlayout.CACertPath)
+	_, _ = fmt.Fprintf(h, "modules:%s\n", strings.Join(guestinit.WantedModules, ","))
+	_, _ = fmt.Fprintf(h, "layout:%s|%s|%s|%s\n", guestlayout.BinDir, guestlayout.CNIBinDir, guestlayout.ModulesDir, guestlayout.CACertPath)
 
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }

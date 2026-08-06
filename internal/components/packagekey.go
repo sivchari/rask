@@ -24,7 +24,7 @@ func packageSetKey(pkgs []iptablesPackage) string {
 	h := sha256.New()
 
 	for _, p := range pkgs {
-		fmt.Fprintf(h, "%s@%s:%s\n", p.name, p.version, p.sha256)
+		_, _ = fmt.Fprintf(h, "%s@%s:%s\n", p.name, p.version, p.sha256)
 	}
 
 	return hex.EncodeToString(h.Sum(nil))[:16]
