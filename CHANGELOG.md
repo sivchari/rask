@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.1.5](https://github.com/sivchari/rask/compare/v0.1.4...v0.1.5) - 2026-08-06
+- feat(vz): implement PortForward through the guest agent by @sivchari in https://github.com/sivchari/rask/pull/10
+- fix(vz): ship a real rask-init instead of the placeholder by @sivchari in https://github.com/sivchari/rask/pull/12
+
 ## [v0.1.4](https://github.com/sivchari/rask/compare/v0.1.3...v0.1.4) - 2026-08-06
 - feat(vz): macOS parity — apiserver args, CoreDNS image, component dir, image prefetch by @sivchari in https://github.com/sivchari/rask/pull/8
 
