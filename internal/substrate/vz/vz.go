@@ -40,6 +40,7 @@ import (
 
 	"github.com/sivchari/rask/internal/cluster"
 	"github.com/sivchari/rask/internal/components"
+	"github.com/sivchari/rask/internal/guestlayout"
 	"github.com/sivchari/rask/internal/substrate"
 	"github.com/sivchari/rask/internal/substrate/vz/embedded"
 )
@@ -109,6 +110,17 @@ func (r *Runtime) kubeconfigPath(name string) string {
 
 func (r *Runtime) timelinePath(name string) string {
 	return filepath.Join(r.dataDir(name), "timeline.txt")
+}
+
+// PrebootPath implements substrate.Runtime. Unlike hostproc's host path,
+// this does not vary by name: guestlayout.PrebootDir is the single fixed
+// in-guest directory rask-init's copyPrebootFiles populates for every
+// cluster (each VM only ever sees its own guest filesystem, so there is no
+// per-cluster collision to avoid) — see guestlayout.PrebootDir's doc
+// comment for why that, not guestlayout.PrebootStagingDir, is the path an
+// in-guest reader like kube-apiserver actually opens at runtime.
+func (r *Runtime) PrebootPath(_, dest string) string {
+	return substrate.PrebootFilePath(guestlayout.PrebootDir, dest)
 }
 
 // diskPath must match vmhost.go's RunVMHost, which is the only writer of

@@ -27,13 +27,19 @@ type fakeRuntime struct {
 
 	loadImagesErr error
 
-	createCalls     []string
-	createOptsCalls []substrate.StartOptions
-	startCalls      []string
-	startOptsCalls  []substrate.StartOptions
-	stopCalls       []string
-	deleteCalls     []string
-	loadImagesCalls []loadImagesCall
+	createCalls      []string
+	createOptsCalls  []substrate.StartOptions
+	startCalls       []string
+	startOptsCalls   []substrate.StartOptions
+	prebootPathCalls []prebootPathCall
+	stopCalls        []string
+	deleteCalls      []string
+	loadImagesCalls  []loadImagesCall
+}
+
+type prebootPathCall struct {
+	name string
+	dest string
 }
 
 type loadImagesCall struct {
@@ -59,6 +65,15 @@ func (f *fakeRuntime) Start(_ context.Context, name string, opts substrate.Start
 	}
 
 	return f.startErr
+}
+
+// PrebootPath records the call and returns a deterministic, obviously-fake
+// path derived from name and dest, so a test can assert Provider.PrebootPath
+// both forwards its arguments unchanged and returns rt's result verbatim.
+func (f *fakeRuntime) PrebootPath(name, dest string) string {
+	f.prebootPathCalls = append(f.prebootPathCalls, prebootPathCall{name: name, dest: dest})
+
+	return "/fake-preboot/" + name + "/" + dest
 }
 
 func (f *fakeRuntime) Stop(_ context.Context, name string) error {

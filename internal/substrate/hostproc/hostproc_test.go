@@ -12,7 +12,56 @@ import (
 	"time"
 
 	"github.com/sivchari/rask/internal/components"
+	"github.com/sivchari/rask/internal/guestlayout"
+	"github.com/sivchari/rask/internal/substrate"
 )
+
+func TestRuntime_PrebootPathMatchesWhereStagePrebootFilesActuallyWrites(t *testing.T) {
+	t.Parallel()
+
+	homeDir := t.TempDir()
+	r := New(homeDir)
+
+	srcPath := filepath.Join(t.TempDir(), "webhook.yaml")
+	if err := os.WriteFile(srcPath, []byte("kind: Config\n"), 0o644); err != nil {
+		t.Fatalf("writing src: %v", err)
+	}
+
+	dest := "auth/webhook.yaml"
+	if err := substrate.StagePrebootFiles(r.dataDir("dev"), []substrate.PrebootFile{{Src: srcPath, Dest: dest}}); err != nil {
+		t.Fatalf("StagePrebootFiles: %v", err)
+	}
+
+	got := r.PrebootPath("dev", dest)
+
+	content, err := os.ReadFile(got)
+	if err != nil {
+		t.Fatalf("PrebootPath() = %q, does not match where StagePrebootFiles wrote: %v", got, err)
+	}
+
+	if string(content) != "kind: Config\n" {
+		t.Errorf("content at PrebootPath() = %q, want %q", content, "kind: Config\n")
+	}
+}
+
+// TestRuntime_PrebootPathIsAHostPathNotVzsInGuestPath demonstrates hostproc
+// and vz's PrebootPath results diverge as expected — hostproc returns a
+// host-filesystem path scoped by homeDir/name, never the vz substrate's
+// single fixed in-guest directory (guestlayout.PrebootDir, importable here
+// since that package carries no build tag) — without needing to import the
+// vz package itself, which only builds on darwin.
+func TestRuntime_PrebootPathIsAHostPathNotVzsInGuestPath(t *testing.T) {
+	t.Parallel()
+
+	r := New(t.TempDir())
+
+	dest := "auth/webhook.yaml"
+	got := r.PrebootPath("dev", dest)
+
+	if got == filepath.Join(guestlayout.PrebootDir, dest) {
+		t.Errorf("PrebootPath() = %q, collides with vz's in-guest formula — hostproc has no VM boundary, its path must be host-specific", got)
+	}
+}
 
 func TestRuntime_DataDirAndKubeconfigPathAreScopedToHomeDirAndName(t *testing.T) {
 	t.Parallel()

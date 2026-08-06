@@ -93,3 +93,62 @@ func TestStagePrebootFiles_MissingSrcFailsWithClearError(t *testing.T) {
 		t.Fatal("StagePrebootFiles with a missing src = nil error, want error")
 	}
 }
+
+func TestPrebootFilePath_MatchesWhereStagePrebootFilesActuallyWrites(t *testing.T) {
+	t.Parallel()
+
+	srcDir := t.TempDir()
+	srcPath := filepath.Join(srcDir, "webhook-kubeconfig.yaml")
+
+	if err := os.WriteFile(srcPath, []byte("kind: Config\n"), 0o644); err != nil {
+		t.Fatalf("writing src: %v", err)
+	}
+
+	dataDir := t.TempDir()
+	dest := "auth/webhook.yaml"
+
+	if err := StagePrebootFiles(dataDir, []PrebootFile{{Src: srcPath, Dest: dest}}); err != nil {
+		t.Fatalf("StagePrebootFiles: %v", err)
+	}
+
+	// A Runtime.PrebootPath implementation would call PrebootFilePath with
+	// its own substrate-specific base directory; hostproc's happens to be
+	// exactly filepath.Join(dataDir, PrebootSubdir), so this doubles as a
+	// direct check that the join formula stays byte-for-byte in sync with
+	// StagePrebootFiles' own.
+	got := PrebootFilePath(filepath.Join(dataDir, PrebootSubdir), dest)
+
+	content, err := os.ReadFile(got)
+	if err != nil {
+		t.Fatalf("PrebootFilePath() = %q, does not match where StagePrebootFiles wrote: %v", got, err)
+	}
+
+	if string(content) != "kind: Config\n" {
+		t.Errorf("content at PrebootFilePath() = %q, want %q", content, "kind: Config\n")
+	}
+}
+
+func TestPrebootFilePath_JoinsSlashSeparatedDestRegardlessOfHostSeparator(t *testing.T) {
+	t.Parallel()
+
+	got := PrebootFilePath("/base", "a/b/c.txt")
+	want := filepath.Join("/base", "a", "b", "c.txt")
+
+	if got != want {
+		t.Errorf("PrebootFilePath() = %q, want %q", got, want)
+	}
+}
+
+func TestPrebootFilePath_DoesNotValidateDest(t *testing.T) {
+	t.Parallel()
+
+	// Unlike StagePrebootFiles, PrebootFilePath has no error return to
+	// reject an invalid dest through (see its doc comment) — it still
+	// resolves to a path rather than panicking or erroring.
+	got := PrebootFilePath("/base", "../escapes")
+	want := filepath.Join("/base", "../escapes")
+
+	if got != want {
+		t.Errorf("PrebootFilePath() = %q, want %q", got, want)
+	}
+}

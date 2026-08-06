@@ -64,6 +64,13 @@ func (f *fakeRuntime) Start(_ context.Context, name string, opts substrate.Start
 	return f.startErr
 }
 
+// PrebootPath returns a deterministic, obviously-fake path; cmd/rask's own
+// tests exercise flag parsing and Provider wiring, not PrebootPath itself
+// (see pkg/cluster's fakeRuntime for call-recording assertions on it).
+func (f *fakeRuntime) PrebootPath(name, dest string) string {
+	return "/fake-preboot/" + name + "/" + dest
+}
+
 func (f *fakeRuntime) Stop(_ context.Context, name string) error {
 	f.stopCalls = append(f.stopCalls, name)
 

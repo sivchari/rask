@@ -62,6 +62,46 @@ func TestBuildPrebootCpio_IncludesStagedFilesAtGuestPrebootStagingDir(t *testing
 	}
 }
 
+func TestRuntime_PrebootPathUsesGuestPrebootDirNotStagingDir(t *testing.T) {
+	t.Parallel()
+
+	r := New(t.TempDir(), nil)
+
+	dest := "auth/webhook.yaml"
+	got := r.PrebootPath("dev", dest)
+
+	// guestlayout.PrebootDir, not PrebootStagingDir: rask-init's
+	// copyPrebootFiles moves staged content there once the data disk is
+	// mounted (see guestlayout.PrebootStagingDir's doc comment), so
+	// PrebootDir is what a component the guest launches — e.g.
+	// kube-apiserver, via an ExtraAPIServerArgs flag — actually reads at
+	// runtime.
+	want := filepath.Join(guestlayout.PrebootDir, dest)
+	if got != want {
+		t.Errorf("PrebootPath() = %q, want %q", got, want)
+	}
+
+	if strings.Contains(got, guestlayout.PrebootStagingDir) {
+		t.Errorf("PrebootPath() = %q, must not point at the staging dir %q: nothing reads from there once the data disk is mounted", got, guestlayout.PrebootStagingDir)
+	}
+}
+
+func TestRuntime_PrebootPathDoesNotVaryByClusterName(t *testing.T) {
+	t.Parallel()
+
+	r := New(t.TempDir(), nil)
+
+	dest := "auth/webhook.yaml"
+
+	// Unlike hostproc's host path (scoped by homeDir/name, since one host
+	// stages every cluster's files under a shared filesystem), vz's guest
+	// path is fixed: each VM only ever sees its own guest filesystem, so
+	// there is nothing for a cluster name to disambiguate.
+	if got1, got2 := r.PrebootPath("dev", dest), r.PrebootPath("staging", dest); got1 != got2 {
+		t.Errorf("PrebootPath() varies by cluster name: %q vs %q, want identical", got1, got2)
+	}
+}
+
 func TestConcatInitramfs_AppendsExtraAfterTemplate(t *testing.T) {
 	t.Parallel()
 
