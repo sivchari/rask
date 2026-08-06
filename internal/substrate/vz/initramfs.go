@@ -10,12 +10,157 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/sivchari/rask/internal/components"
 	"github.com/sivchari/rask/internal/guestinit"
 	"github.com/sivchari/rask/internal/guestlayout"
 	"github.com/sivchari/rask/internal/substrate/vz/embedded"
 )
+
+// resolvedTemplateInputs is buildTemplateInitramfs's resolve phase output:
+// every component the assembled cpio below needs, fetched concurrently by
+// resolveTemplateInputs.
+type resolvedTemplateInputs struct {
+	raskInitBinary []byte
+	paths          *components.Paths
+	kernel         *components.GuestKernel
+	iptables       *components.IPTablesBundle
+	e2fsprogs      *components.E2fsprogsBundle
+	caBundlePath   string
+	gcompat        *components.GCompatBundle
+	busybox        *components.BusyboxBundle
+}
+
+// resolveTemplateInputs fetches everything buildTemplateInitramfs needs to
+// assemble the template initramfs — rask-init, Kubernetes components, the
+// guest kernel, and the iptables/e2fsprogs/CA/gcompat/busybox bundles —
+// concurrently rather than one at a time: on a cold cache (the only time
+// any of this touches the network — see the cache-hit check above) these
+// eight resolutions are entirely independent of one another, so serializing
+// them needlessly multiplies cold-start latency by eight for no benefit.
+// Bounded by templateInitramfsBuildTimeout, not by whatever's left of the
+// caller's own ctx budget (see that constant's doc comment for why).
+//
+// Prints a short progress line per component to stderr as each starts and
+// once more when all are ready: this phase is the only part of a "rask
+// create" that can legitimately take minutes on a cold cache, and running
+// that long in total silence is indistinguishable, from the outside, from
+// having hung — found to matter directly during this investigation.
+func resolveTemplateInputs(ctx context.Context, cache *components.Cache) (*resolvedTemplateInputs, error) {
+	fmt.Fprintln(os.Stderr, "vz: building the template initramfs for the first time on this host (downloading rask-init, Kubernetes components, the guest kernel, and a few Alpine bundles — later clusters reuse this instantly)...")
+
+	resolveCtx, cancel := context.WithTimeout(ctx, templateInitramfsBuildTimeout)
+	defer cancel()
+
+	in := &resolvedTemplateInputs{}
+
+	g, gctx := errgroup.WithContext(resolveCtx)
+
+	g.Go(func() (err error) {
+		fmt.Fprintln(os.Stderr, "vz:   resolving rask-init...")
+
+		// Resolved here, not before this function's cache-hit check runs
+		// (see buildTemplateInitramfs): a warm cachePath there already has
+		// rask-init baked in, so an already-built template initramfs must
+		// never require a real rask-init binary (env var, build, or
+		// download) to be available at all — see embedded.Resolve's doc
+		// comment for the fallback chain this triggers when it isn't.
+		in.raskInitBinary, err = embedded.Resolve(gctx, cache.Dir())
+		if err != nil {
+			return fmt.Errorf("vz: resolving rask-init: %w", err)
+		}
+
+		return nil
+	})
+
+	g.Go(func() (err error) {
+		fmt.Fprintln(os.Stderr, "vz:   resolving Kubernetes components...")
+
+		in.paths, err = cache.Ensure(gctx, components.DefaultK8sVersion, components.ARM64)
+		if err != nil {
+			return fmt.Errorf("vz: resolving component binaries: %w", err)
+		}
+
+		return nil
+	})
+
+	g.Go(func() (err error) {
+		fmt.Fprintln(os.Stderr, "vz:   resolving the guest kernel...")
+
+		in.kernel, err = cache.EnsureGuestKernel(gctx)
+		if err != nil {
+			return fmt.Errorf("vz: resolving guest kernel: %w", err)
+		}
+
+		return nil
+	})
+
+	g.Go(func() (err error) {
+		fmt.Fprintln(os.Stderr, "vz:   resolving the iptables bundle...")
+
+		in.iptables, err = cache.EnsureIPTablesBundle(gctx)
+		if err != nil {
+			return fmt.Errorf("vz: resolving iptables bundle: %w", err)
+		}
+
+		return nil
+	})
+
+	g.Go(func() (err error) {
+		fmt.Fprintln(os.Stderr, "vz:   resolving the e2fsprogs bundle...")
+
+		in.e2fsprogs, err = cache.EnsureE2fsprogsBundle(gctx)
+		if err != nil {
+			return fmt.Errorf("vz: resolving e2fsprogs bundle: %w", err)
+		}
+
+		return nil
+	})
+
+	g.Go(func() (err error) {
+		fmt.Fprintln(os.Stderr, "vz:   resolving the CA bundle...")
+
+		in.caBundlePath, err = cache.EnsureCABundle(gctx)
+		if err != nil {
+			return fmt.Errorf("vz: resolving CA bundle: %w", err)
+		}
+
+		return nil
+	})
+
+	g.Go(func() (err error) {
+		fmt.Fprintln(os.Stderr, "vz:   resolving the gcompat bundle...")
+
+		in.gcompat, err = cache.EnsureGCompatBundle(gctx)
+		if err != nil {
+			return fmt.Errorf("vz: resolving gcompat bundle: %w", err)
+		}
+
+		return nil
+	})
+
+	g.Go(func() (err error) {
+		fmt.Fprintln(os.Stderr, "vz:   resolving the busybox bundle...")
+
+		in.busybox, err = cache.EnsureBusyboxBundle(gctx)
+		if err != nil {
+			return fmt.Errorf("vz: resolving busybox bundle: %w", err)
+		}
+
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	fmt.Fprintln(os.Stderr, "vz: template initramfs components ready, assembling...")
+
+	return in, nil
+}
 
 // templateInitramfsVersion is bumped whenever anything that changes the
 // template initramfs's content changes (a new components version pin, a
@@ -24,6 +169,26 @@ import (
 // forever, so a version that silently went stale would boot a stale guest
 // without any error.
 const templateInitramfsVersion = "v15"
+
+// templateInitramfsBuildTimeout bounds buildTemplateInitramfs's resolve
+// phase below (rask-init, Kubernetes components, guest kernel,
+// iptables/e2fsprogs/gcompat/busybox bundles) — deliberately independent
+// of vz.go's bootTimeout, which only has to cover the guest's own boot
+// time (see that constant's doc comment for the incident this split
+// fixes). A slow or genuinely stalled network must fail here, with a
+// clear "resolving template initramfs components" error naming which
+// component, instead of silently consuming whatever time budget a caller
+// (Runtime.Create, or vm-host's own redundant cache-hit call — see
+// RunVMHost) was relying on for something else entirely.
+//
+// Measured live during this investigation, fully cold (every item below
+// actually downloaded over a real network, no cache) on an ordinary
+// connection: ~270s serially. With every item now fetched concurrently
+// (both across the calls below and within Ensure's own 10 independent
+// downloads — see ensure.go), that cold time drops substantially; this
+// timeout keeps generous headroom over even the old serial figure for a
+// slower network, without being unbounded.
+const templateInitramfsBuildTimeout = 8 * time.Minute
 
 // buildTemplateInitramfs builds (or returns the cached path to) the
 // initramfs shared by every rask cluster on this host: rask-init as /init,
@@ -52,82 +217,42 @@ func buildTemplateInitramfs(ctx context.Context, cache *components.Cache) (strin
 		return cachePath, nil
 	}
 
-	// Resolved here, not at the top of this function: a warm cachePath
-	// above already has rask-init baked in, so an already-built template
-	// initramfs must never require a real rask-init binary (env var,
-	// build, or download) to be available at all — see embedded.Resolve's
-	// doc comment for the fallback chain this triggers when it isn't.
-	raskInitBinary, err := embedded.Resolve(ctx, cache.Dir())
+	in, err := resolveTemplateInputs(ctx, cache)
 	if err != nil {
-		return "", fmt.Errorf("vz: resolving rask-init: %w", err)
-	}
-
-	paths, err := cache.Ensure(ctx, components.DefaultK8sVersion, components.ARM64)
-	if err != nil {
-		return "", fmt.Errorf("vz: resolving component binaries: %w", err)
-	}
-
-	kernel, err := cache.EnsureGuestKernel(ctx)
-	if err != nil {
-		return "", fmt.Errorf("vz: resolving guest kernel: %w", err)
-	}
-
-	iptables, err := cache.EnsureIPTablesBundle(ctx)
-	if err != nil {
-		return "", fmt.Errorf("vz: resolving iptables bundle: %w", err)
-	}
-
-	e2fsprogs, err := cache.EnsureE2fsprogsBundle(ctx)
-	if err != nil {
-		return "", fmt.Errorf("vz: resolving e2fsprogs bundle: %w", err)
-	}
-
-	caBundlePath, err := cache.EnsureCABundle(ctx)
-	if err != nil {
-		return "", fmt.Errorf("vz: resolving CA bundle: %w", err)
-	}
-
-	gcompat, err := cache.EnsureGCompatBundle(ctx)
-	if err != nil {
-		return "", fmt.Errorf("vz: resolving gcompat bundle: %w", err)
-	}
-
-	busybox, err := cache.EnsureBusyboxBundle(ctx)
-	if err != nil {
-		return "", fmt.Errorf("vz: resolving busybox bundle: %w", err)
+		return "", err
 	}
 
 	w := newCpioWriter()
 
-	if err := w.WriteFile("init", 0o755, raskInitBinary); err != nil {
+	if err := w.WriteFile("init", 0o755, in.raskInitBinary); err != nil {
 		return "", fmt.Errorf("vz: writing /init: %w", err)
 	}
 
-	if err := addComponentBinaries(w, paths); err != nil {
+	if err := addComponentBinaries(w, in.paths); err != nil {
 		return "", err
 	}
 
-	if err := addGuestModules(w, kernel); err != nil {
+	if err := addGuestModules(w, in.kernel); err != nil {
 		return "", err
 	}
 
-	if err := copyLocalTree(w, "", iptables.Dir); err != nil {
+	if err := copyLocalTree(w, "", in.iptables.Dir); err != nil {
 		return "", fmt.Errorf("vz: adding iptables bundle: %w", err)
 	}
 
-	if err := copyLocalTree(w, "", e2fsprogs.Dir); err != nil {
+	if err := copyLocalTree(w, "", in.e2fsprogs.Dir); err != nil {
 		return "", fmt.Errorf("vz: adding e2fsprogs bundle: %w", err)
 	}
 
-	if err := copyLocalTree(w, "", gcompat.Dir); err != nil {
+	if err := copyLocalTree(w, "", in.gcompat.Dir); err != nil {
 		return "", fmt.Errorf("vz: adding gcompat bundle: %w", err)
 	}
 
-	if err := copyLocalTree(w, "", busybox.Dir); err != nil {
+	if err := copyLocalTree(w, "", in.busybox.Dir); err != nil {
 		return "", fmt.Errorf("vz: adding busybox bundle: %w", err)
 	}
 
-	caBundle, err := os.ReadFile(caBundlePath)
+	caBundle, err := os.ReadFile(in.caBundlePath)
 	if err != nil {
 		return "", fmt.Errorf("vz: reading CA bundle: %w", err)
 	}

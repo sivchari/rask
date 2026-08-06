@@ -18,7 +18,15 @@ import (
 // sending it a Stop signal — a vm-host with no self-imposed deadline is
 // then the only thing left that could stop it, and it wasn't watching for
 // this at all.
-const bootWatchdogTimeout = 6 * time.Minute
+//
+// Purely a backup for vz.go's own bootTimeout: this timer only starts
+// once vm.Start() has already succeeded (see RunVMHost), i.e. after every
+// prep step — including buildTemplateInitramfs, itself bounded separately
+// by templateInitramfsBuildTimeout — is already done, so it never needs
+// to cover download time either. Kept a bit more generous than
+// bootTimeout since a backup firing slightly later than the primary path
+// is the intended order.
+const bootWatchdogTimeout = 3 * time.Minute
 
 // runBootWatchdog waits up to timeout for the guest's control agent
 // (reachable through agentHostPort) to report healthy. If it never does —

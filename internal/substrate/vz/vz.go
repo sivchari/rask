@@ -43,13 +43,36 @@ import (
 	"github.com/sivchari/rask/internal/substrate"
 )
 
-// bootTimeout bounds how long Start waits for the guest agent to report
+// bootTimeout bounds how long Start waits, once vm-host is spawned, for it
+// to report its network state and then for the guest agent to report
 // healthy (node Ready + CoreDNS/local-path-provisioner applied — see
-// cmd/rask-init/boot.go) before giving up. Generous: the first Start for a
-// given host also pays the one-time cost of building the (thereafter
-// cached) template initramfs, on top of the VM's own boot and Kubernetes
-// bootstrap time.
-const bootTimeout = 5 * time.Minute
+// cmd/rask-init/boot.go) before giving up.
+//
+// Deliberately does NOT also have to cover the one-time cost of building
+// the template initramfs: that's Create's job, which pkg/cluster.Provider
+// always runs to completion before Start (see Runtime.Create's doc
+// comment), bounded separately and generously by
+// initramfs.go's templateInitramfsBuildTimeout — a slow/cold download
+// there now fails with its own clear error instead of silently eating
+// into this budget.
+//
+// Found live during this investigation: with both waits sharing one
+// 5-minute budget derived from whatever ctx the caller supplied, a caller
+// that itself wraps a whole "create a cluster" call in a single outer
+// timeout (a natural pattern — pkg/cluster.Provider.Create runs Create
+// then Start against the very same ctx) could see that budget mostly
+// consumed by Create's cold-cache downloads before Start even began,
+// leaving this wait almost none of it — producing exactly this error,
+// with no vm-host or guest bug at all, and (worse) Start's own failure
+// path then force-terminating a vm-host process that might still have
+// been legitimately working. What's actually left for this wait to cover,
+// assuming Create already warmed the cache (vm-host's own redundant
+// buildTemplateInitramfs call — see RunVMHost — then hits a cache hit) is
+// vm-host's local prep (lock, memory check, disk/identifier/network setup)
+// plus the guest's own boot: measured well under 10s end to end. Generous
+// headroom over that for slower hardware or a first-ever guest kernel
+// module load.
+const bootTimeout = 90 * time.Second
 
 // Runtime implements substrate.Runtime using a Virtualization.framework VM
 // per cluster.
