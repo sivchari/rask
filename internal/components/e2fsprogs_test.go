@@ -12,7 +12,7 @@ func TestEnsureE2fsprogsBundle_CacheHitSkipsDownload(t *testing.T) {
 
 	c := NewCache(t.TempDir())
 
-	dir := filepath.Join(c.dir, "e2fsprogs-"+E2fsprogsBundleVersion)
+	dir := filepath.Join(c.dir, "e2fsprogs-"+E2fsprogsBundleKey)
 	if err := os.MkdirAll(filepath.Join(dir, "sbin"), 0o755); err != nil {
 		t.Fatalf("seeding cache dir: %v", err)
 	}

@@ -145,7 +145,7 @@ func TestEnsureIPTablesBundle_CacheHitSkipsDownload(t *testing.T) {
 
 	c := NewCache(t.TempDir())
 
-	dir := filepath.Join(c.dir, "iptables-"+IPTablesBundleVersion)
+	dir := filepath.Join(c.dir, "iptables-"+IPTablesBundleKey)
 	if err := os.MkdirAll(filepath.Join(dir, "usr", "sbin"), 0o755); err != nil {
 		t.Fatalf("seeding cache dir: %v", err)
 	}

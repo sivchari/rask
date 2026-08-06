@@ -84,6 +84,58 @@ func extractWithSystemCpio(t *testing.T, data []byte) {
 	}
 }
 
+// TestCpioWriter_PreservesExecutableMode guards against a regression where
+// WriteFile's mode argument is lost or ignored on the way into the newc
+// header: extractWithSystemCpio/TestCpioWriter_WriteFileThenReadBackViaCpioBinary
+// above only ever asserted content, never the extracted entry's
+// permission bits, so this exact class of bug (e.g. buildTemplateInitramfs
+// writing /init at the wrong mode, leaving a non-executable PID 1 that
+// silently wedges the guest at boot with no error on the host side) could
+// previously regress with no test catching it. Cross-validated against the
+// system `cpio` binary, like every other test in this file, not against
+// this package's own encoding logic.
+func TestCpioWriter_PreservesExecutableMode(t *testing.T) {
+	t.Parallel()
+
+	w := newCpioWriter()
+
+	if err := w.WriteFile("executable", 0o755, []byte("#!/bin/sh\n")); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := w.WriteFile("not-executable", 0o644, []byte("data")); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	data, err := w.Finish()
+	if err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+
+	extractDir := extractArchiveForTest(t, data)
+
+	tests := []struct {
+		name     string
+		wantPerm os.FileMode
+	}{
+		{"executable", 0o755},
+		{"not-executable", 0o644},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info, err := os.Stat(filepath.Join(extractDir, tt.name))
+			if err != nil {
+				t.Fatalf("stat %s: %v", tt.name, err)
+			}
+
+			if perm := info.Mode().Perm(); perm != tt.wantPerm {
+				t.Errorf("%s mode = %o, want %o", tt.name, perm, tt.wantPerm)
+			}
+		})
+	}
+}
+
 func TestCpioWriter_RejectsAbsolutePaths(t *testing.T) {
 	t.Parallel()
 

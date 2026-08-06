@@ -49,6 +49,15 @@ func guestKernelURL() string {
 	return fmt.Sprintf("https://dl-cdn.alpinelinux.org/alpine/%s/main/aarch64/linux-virt-%s.apk", AlpineVersion, GuestKernelPkgVersion)
 }
 
+// GuestKernelKey is a content-addressed identifier for the pinned guest
+// kernel package (GuestKernelPkgVersion plus its checksum — see
+// packageSetKey), for internal/substrate/vz's template initramfs cache
+// key. EnsureGuestKernel's own cache directory keeps using
+// GuestKernelPkgVersion directly (it is the actual pin, not a separate
+// hand-summarized constant), so this exists purely for that external
+// consumer.
+var GuestKernelKey = packageSetKey([]iptablesPackage{{name: "linux-virt", version: GuestKernelPkgVersion, sha256: guestKernelSHA256}})
+
 // GuestKernel is the resolved, ready-to-boot arm64 kernel and module tree
 // for rask's vz substrate guest.
 type GuestKernel struct {

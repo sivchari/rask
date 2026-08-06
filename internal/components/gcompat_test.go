@@ -12,7 +12,7 @@ func TestEnsureGCompatBundle_CacheHitSkipsDownload(t *testing.T) {
 
 	c := NewCache(t.TempDir())
 
-	dir := filepath.Join(c.dir, "gcompat-"+GCompatBundleVersion)
+	dir := filepath.Join(c.dir, "gcompat-"+GCompatBundleKey)
 	if err := os.MkdirAll(filepath.Join(dir, "lib"), 0o755); err != nil {
 		t.Fatalf("seeding cache dir: %v", err)
 	}

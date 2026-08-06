@@ -9,30 +9,6 @@ project_name: rask
 # Linux config, so they are disabled here.
 
 builds:
-  - id: rask-darwin
-    main: ./cmd/rask
-    binary: rask
-    env:
-      - CGO_ENABLED=1
-    goos:
-      - darwin
-    goarch:
-      - arm64
-    ldflags:
-      - -s -w
-    hooks:
-      pre:
-        # internal/substrate/vz/embedded go:embeds cmd/rask-init verbatim;
-        # without cross-compiling it fresh here first, this build would
-        # ship the committed placeholder instead (see that package's doc
-        # comment) — the exact bug this hook exists to prevent.
-        - make build-rask-init
-      post:
-        # Ad-hoc signing with the virtualization entitlement; required for
-        # Virtualization.framework APIs. Gatekeeper may still prompt on
-        # first run since this is not a notarized Developer ID signature.
-        - codesign --entitlements vz.entitlements -s - -f {{ .Path }}
-
   - id: rask-bundled-darwin
     main: ./cmd/rask
     binary: rask-bundled
@@ -48,23 +24,20 @@ builds:
       - -s -w
     hooks:
       pre:
-        # Same reasoning as rask-darwin's pre hook above: bundle-payload
-        # stages the network component payload, not rask-init.
+        # internal/substrate/vz/embedded go:embeds cmd/rask-init verbatim;
+        # without cross-compiling it fresh here first, this build would
+        # ship the committed placeholder instead (see that package's doc
+        # comment) — the exact bug this hook exists to prevent. Also
+        # stages the network component payload (not rask-init).
         - make build-rask-init
         - go run ./cmd/bundle-payload -target darwin/arm64
       post:
+        # Ad-hoc signing with the virtualization entitlement; required for
+        # Virtualization.framework APIs. Gatekeeper may still prompt on
+        # first run since this is not a notarized Developer ID signature.
         - codesign --entitlements vz.entitlements -s - -f {{ .Path }}
 
 archives:
-  - id: rask-darwin
-    formats: ['tar.gz']
-    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    files:
-      - LICENSE
-      - README.md
-    ids:
-      - rask-darwin
-
   - id: rask-bundled-darwin
     formats: ['tar.gz']
     name_template: "{{ .ProjectName }}-bundled_{{ .Version }}_{{ .Os }}_{{ .Arch }}"

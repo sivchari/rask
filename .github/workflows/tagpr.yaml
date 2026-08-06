@@ -61,23 +61,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Guards the "rask-init" build/archive in .goreleaser.yml: a real
-      # linux/arm64 ELF, not e.g. an empty or truncated build. This is the
-      # asset internal/substrate/vz/embedded's runtime fallback downloads
-      # for Go module consumers (e.g. fjord) — see that package's Resolve.
-      - name: Verify the rask-init release asset is a real ELF binary
-        run: |
-          set -euo pipefail
-          bin=$(find dist -type f -name rask-init)
-          if [ -z "$bin" ]; then
-            echo "::error::no rask-init binary found under dist/ (see the \"rask-init\" build in .goreleaser.yml)"
-            exit 1
-          fi
-          if [ "$(head -c4 "$bin" | od -An -tx1 | tr -d ' \n')" != "7f454c46" ]; then
-            echo "::error::$bin does not start with the ELF magic number"
-            exit 1
-          fi
-
   # darwin binaries need a native macOS build (cgo +
   # Virtualization.framework), so a second goreleaser run appends them to
   # the same draft release in parallel with the Linux job.
@@ -110,17 +93,17 @@ jobs:
 
       # Fails the job (and, since publish needs both goreleaser jobs to
       # succeed, keeps the release a draft forever instead of going public)
-      # if either darwin binary still embeds
+      # if the darwin bundled binary still embeds
       # internal/substrate/vz/embedded's placeholder rask-init instead of a
-      # real one — the exact bug this whole change fixes. Checked by
-      # size/content, not assumed: the real embedded rask-init alone is
-      # ~40MB, far larger than a placeholder-only build ever is.
+      # real one. Checked by size/content, not assumed: the real embedded
+      # rask-init alone is ~40MB, far larger than a placeholder-only build
+      # ever is.
       - name: Verify rask-init is embedded, not the placeholder
         run: |
           set -euo pipefail
-          bins=$(find dist -type f \( -name rask -o -name rask-bundled \))
+          bins=$(find dist -type f -name rask-bundled)
           if [ -z "$bins" ]; then
-            echo "::error::no rask/rask-bundled binaries found under dist/ to verify"
+            echo "::error::no rask-bundled binary found under dist/ to verify"
             exit 1
           fi
           for bin in $bins; do

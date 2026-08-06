@@ -23,8 +23,8 @@ const startLockFailFastBudget = time.Second
 
 // TestRuntime_Start_FailsFastWhenAnotherVMRunning is the regression test
 // for the live incident this was written for: "rask create cluster --name
-// t1" while another cluster's VM was already running used to hang for
-// minutes (waitForVMState's bootTimeout) instead of failing immediately,
+// t1" while another cluster's VM was already running used to hang for the
+// entirety of waitForVMState's bootTimeout instead of failing immediately,
 // because nothing checked the host-wide VM lock (lock.go) until the
 // spawned vm-host process tried and silently exited. Start now peeks the
 // lock itself, before spawning anything.

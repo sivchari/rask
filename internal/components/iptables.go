@@ -38,9 +38,11 @@ var iptablesPackages = []iptablesPackage{
 	{name: "iptables", version: "1.8.11-r1", sha256: "09f11de18f75653ccae83190f20b2dffb48533186d720ae23b73904be90ff89e"},
 }
 
-// IPTablesBundleVersion identifies this pinned package set for cache
-// directory naming.
-const IPTablesBundleVersion = "1.8.11-r1"
+// IPTablesBundleKey is a content-addressed identifier for iptablesPackages
+// (see packageSetKey), used both for this bundle's own cache directory
+// name and as an input to internal/substrate/vz's template initramfs
+// cache key.
+var IPTablesBundleKey = packageSetKey(iptablesPackages)
 
 func (p iptablesPackage) url() string {
 	return fmt.Sprintf("https://dl-cdn.alpinelinux.org/alpine/%s/main/aarch64/%s-%s.apk", AlpineVersion, p.name, p.version)
@@ -60,7 +62,7 @@ type IPTablesBundle struct {
 // extracts every Alpine package in iptablesPackages into one merged
 // directory tree, preserving their internal symlinks.
 func (c *Cache) EnsureIPTablesBundle(ctx context.Context) (*IPTablesBundle, error) {
-	dir := filepath.Join(c.dir, "iptables-"+IPTablesBundleVersion)
+	dir := filepath.Join(c.dir, "iptables-"+IPTablesBundleKey)
 	marker := filepath.Join(dir, "usr", "sbin", "xtables-nft-multi")
 
 	if _, err := os.Stat(marker); err == nil {

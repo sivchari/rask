@@ -26,9 +26,11 @@ var e2fsprogsPackages = []iptablesPackage{
 	{name: "e2fsprogs", version: "1.47.1-r1", sha256: "c28dddb51a40a91820a9f0dcd32f19abf23c8256543d7afc4f87363b28885a66"},
 }
 
-// E2fsprogsBundleVersion identifies this pinned package set for cache
-// directory naming.
-const E2fsprogsBundleVersion = "1.47.1-r1"
+// E2fsprogsBundleKey is a content-addressed identifier for
+// e2fsprogsPackages (see packageSetKey), used both for this bundle's own
+// cache directory name and as an input to internal/substrate/vz's template
+// initramfs cache key.
+var E2fsprogsBundleKey = packageSetKey(e2fsprogsPackages)
 
 // E2fsprogsBundle is the resolved, merged file tree containing mkfs.ext4
 // (sbin/mkfs.ext4) and every shared library it needs, extracted at the same
@@ -42,7 +44,7 @@ type E2fsprogsBundle struct {
 // tree, preserving their internal symlinks (e.g. sbin/mkfs.ext4 ->
 // mke2fs).
 func (c *Cache) EnsureE2fsprogsBundle(ctx context.Context) (*E2fsprogsBundle, error) {
-	dir := filepath.Join(c.dir, "e2fsprogs-"+E2fsprogsBundleVersion)
+	dir := filepath.Join(c.dir, "e2fsprogs-"+E2fsprogsBundleKey)
 	marker := filepath.Join(dir, "sbin", "mke2fs")
 
 	if _, err := os.Stat(marker); err == nil {

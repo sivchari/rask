@@ -14,10 +14,30 @@ components run as plain supervised processes (no kubeadm phases, no
 containerized node), and `create` copies a prebaked, already-bootstrapped
 datastore instead of replaying bootstrap.
 
+## Install
+
+Every release ships one self-contained binary per platform — every
+component it needs (Kubernetes binaries, kine, containerd, runc, the CNI
+plugins) is embedded at build time, so `rask create` never downloads
+anything on first use:
+
+```sh
+curl -fLO https://github.com/sivchari/rask/releases/latest/download/rask-bundled_<version>_<os>_<arch>.tar.gz
+tar xzf rask-bundled_<version>_<os>_<arch>.tar.gz
+chmod +x rask-bundled
+```
+
+`<os>_<arch>` is one of `linux_amd64`, `linux_arm64` or `darwin_arm64`.
+Verify against the matching `rask_<version>_checksums.txt` /
+`rask_<version>_darwin_checksums.txt` release asset before trusting it.
+
+Building from source: `make codesign` (macOS, build + sign) or `make
+build` (Linux) produces a plain binary that downloads components on first
+use instead — a developer convenience, not a released artifact.
+
 ## Quick start
 
 ```sh
-make codesign   # macOS (build + sign). Linux: make build
 rask create cluster --name dev --wait coredns
 rask load docker-image myapp:dev --name dev
 rask delete cluster --name dev
@@ -25,6 +45,11 @@ rask delete cluster --name dev
 
 `--context-format 'kind-{name}'` makes tools that trust kind contexts
 (e.g. Tilt) work unchanged.
+
+To pre-warm `~/.rask/cache` without creating a cluster (e.g. baking a
+machine image), run `rask pull` — offline, from the binary's embedded
+payload. Only works on a bundled (released) binary; see
+[HANDOFF-ebs-bake.md](HANDOFF-ebs-bake.md) for the full bake procedure.
 
 ## Requirements
 
