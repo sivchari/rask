@@ -1,5 +1,8 @@
 # Changelog
 
+## [v0.1.4](https://github.com/sivchari/rask/compare/v0.1.3...v0.1.4) - 2026-08-06
+- feat(vz): macOS parity — apiserver args, CoreDNS image, component dir, image prefetch by @sivchari in https://github.com/sivchari/rask/pull/8
+
 ## [v0.1.3](https://github.com/sivchari/rask/compare/v0.1.2...v0.1.3) - 2026-08-03
 - fix: readiness error keeps the real cause when the deadline fires mid-request by @sivchari in https://github.com/sivchari/rask/pull/5
 - ci: stop parallel goreleaser runs from splitting one tag into two releases by @sivchari in https://github.com/sivchari/rask/pull/7
