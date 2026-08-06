@@ -1,5 +1,8 @@
 # Changelog
 
+## [v0.1.9](https://github.com/sivchari/rask/compare/v0.1.8...v0.1.9) - 2026-08-06
+- feat(cluster): resolve preboot paths per substrate by @sivchari in https://github.com/sivchari/rask/pull/19
+
 ## [v0.1.8](https://github.com/sivchari/rask/compare/v0.1.7...v0.1.8) - 2026-08-06
 - feat(cluster): make the Go library usable on macOS by @sivchari in https://github.com/sivchari/rask/pull/17
 
