@@ -1,5 +1,8 @@
 # Changelog
 
+## [v0.1.6](https://github.com/sivchari/rask/compare/v0.1.5...v0.1.6) - 2026-08-06
+- feat: ship bundled-only, content-address the caches, add rask pull by @sivchari in https://github.com/sivchari/rask/pull/13
+
 ## [v0.1.5](https://github.com/sivchari/rask/compare/v0.1.4...v0.1.5) - 2026-08-06
 - feat(vz): implement PortForward through the guest agent by @sivchari in https://github.com/sivchari/rask/pull/10
 - fix(vz): ship a real rask-init instead of the placeholder by @sivchari in https://github.com/sivchari/rask/pull/12
