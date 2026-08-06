@@ -39,10 +39,6 @@ func newRootCommand(rt substrate.Runtime, homeDir string) *cobra.Command {
 		newPullCommand(rt),
 	)
 
-	if vmHost := newVMHostCommand(); vmHost != nil {
-		root.AddCommand(vmHost)
-	}
-
 	if seed := newSeedCommand(rt, homeDir); seed != nil {
 		root.AddCommand(seed)
 	}

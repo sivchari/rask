@@ -77,6 +77,62 @@ rask create cluster --component-dir /path/to/kubernetes-server/bin \
 The same options are available as a Go library via
 [`pkg/cluster`](pkg/cluster) (see `Example_fjordIntegration`).
 
+## Using rask as a library
+
+`pkg/cluster` is rask's importable Go API — the library form of `rask
+create/delete/get/export`, for a program (e.g. fjord) that wants to drive
+rask in-process instead of shelling out to the `rask` binary. On macOS,
+your own binary — not `rask` — is what actually hosts each cluster's VM, so
+it must do three things:
+
+1. **Call the re-exec entrypoint first.** Each cluster's VM runs in a
+   detached process that outlives the call that created it, spawned by
+   re-execing the currently running binary. Call `cluster.RunVMHostIfRequested()`
+   as the very first line of `main`, before your own flag/subcommand
+   parsing — without it, that re-exec has no matching entrypoint, and
+   `Provider.Create` fails only after a boot timeout instead of ever
+   getting the chance to host the VM. Safe to call unconditionally: it
+   returns `(false, nil)` immediately for an ordinary invocation, and
+   compiles to a no-op on Linux.
+
+   ```go
+   func main() {
+       if handled, err := cluster.RunVMHostIfRequested(); handled {
+           if err != nil {
+               log.Fatal(err)
+           }
+           return
+       }
+       // ... the rest of your program's normal startup
+   }
+   ```
+
+2. **Cross-compile and embed rask-init at build time.** A module
+   consumer's own copy of rask's embedded `rask-init` binary is a
+   placeholder (it has to be, so `go build` works from a read-only module
+   cache), so supply a real one via `cluster.WithRaskInit`:
+
+   ```sh
+   GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o internal/embedded/rask-init github.com/sivchari/rask/cmd/rask-init
+   ```
+
+   ```go
+   //go:embed internal/embedded/rask-init
+   var raskInit []byte
+
+   provider, err := cluster.NewProvider(homeDir, cluster.WithRaskInit(raskInit))
+   ```
+
+3. **Codesign your own binary.** It hosts the VM, so it — not `rask` —
+   needs the `com.apple.security.virtualization` entitlement:
+   `codesign --entitlements vz.entitlements -f -s - your-binary` (see
+   `make codesign` for the equivalent used to sign released `rask`
+   binaries). rask already fails fast with fix instructions if this is
+   missing.
+
+See `Example_fjordIntegration` in [`pkg/cluster`](pkg/cluster) for the full
+option set beyond these three requirements.
+
 ## Status
 
 Pre-alpha. CLI and API may change. No addons by design — like kind, you

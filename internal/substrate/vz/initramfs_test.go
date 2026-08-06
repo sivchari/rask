@@ -28,7 +28,7 @@ func TestBuildTemplateInitramfs_InitEntryIsExecutableAndMatchesResolved(t *testi
 		t.Skip("embedded/rask-init is still the placeholder; run `make build-rask-init` to cross-compile the real binary")
 	}
 
-	raskInitBinary, err := embedded.Resolve()
+	raskInitBinary, err := embedded.Resolve("")
 	if err != nil {
 		t.Fatalf("embedded.Resolve: %v", err)
 	}

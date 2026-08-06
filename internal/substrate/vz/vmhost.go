@@ -14,6 +14,7 @@ import (
 
 	"github.com/sivchari/rask/internal/cluster"
 	"github.com/sivchari/rask/internal/components"
+	"github.com/sivchari/rask/internal/substrate/vz/embedded"
 )
 
 // RunVMHost is the entry point for the "rask __vm-host" hidden CLI
@@ -81,7 +82,14 @@ func RunVMHost(ctx context.Context, homeDir, name string) error {
 		return fmt.Errorf("vz: resolving guest kernel: %w", err)
 	}
 
-	initramfsPath, err := buildTemplateInitramfs(ctx, cache)
+	// The same override path Runtime.Create's own buildTemplateInitramfs
+	// call checks (see syncRaskInitOverride, vz.go); passed unconditionally
+	// since embedded.Resolve treats a missing file there as "no
+	// cluster.WithRaskInit injection" and falls through on its own — this
+	// process shares homeDir with Create but not memory, so a file at a
+	// path both can derive from homeDir alone is the only way to agree on
+	// which rask-init bytes to use.
+	initramfsPath, err := buildTemplateInitramfs(ctx, cache, embedded.OverridePath(cache.Dir()))
 	if err != nil {
 		return err
 	}

@@ -7,8 +7,7 @@ import (
 )
 
 // newSeedCommand returns the "rask seed" command group, or nil if no
-// subcommand is available on this platform (mirroring newVMHostCommand's
-// nil-on-unsupported-platform convention).
+// subcommand is available on this platform.
 func newSeedCommand(rt substrate.Runtime, homeDir string) *cobra.Command {
 	build := newSeedBuildCommand(rt, homeDir)
 	if build == nil {

@@ -48,3 +48,25 @@ func Example_fjordIntegration() {
 	fmt.Println(opts.ComponentDir)
 	// Output: /var/lib/fjord/eksd/kubernetes-server/bin
 }
+
+// ExampleRunVMHostIfRequested shows the one line a program hosting rask
+// clusters on macOS must add as the very first line of main, before its
+// own flag/subcommand parsing: each cluster's VM runs in a detached
+// process, spawned by re-execing the currently running binary with a
+// hidden entrypoint (see RunVMHostIfRequested's doc comment for why).
+// Calling this unconditionally is what lets that re-exec land here instead
+// of failing with no matching subcommand.
+func ExampleRunVMHostIfRequested() {
+	if handled, err := cluster.RunVMHostIfRequested(); handled {
+		if err != nil {
+			fmt.Println("vm-host:", err)
+		}
+
+		return
+	}
+
+	// A real caller falls through to its own normal startup here (this
+	// process was not asked to host a VM).
+	fmt.Println("not a vm-host invocation")
+	// Output: not a vm-host invocation
+}
