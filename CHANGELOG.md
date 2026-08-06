@@ -1,5 +1,8 @@
 # Changelog
 
+## [v0.2.1](https://github.com/sivchari/rask/compare/v0.2.0...v0.2.1) - 2026-08-06
+- fix(bundle-payload): stop cross-target blob leakage into bundled binaries by @sivchari in https://github.com/sivchari/rask/pull/23
+
 ## [v0.1.10](https://github.com/sivchari/rask/compare/v0.1.9...v0.1.10) - 2026-08-06
 - feat: bundle the cluster's container images into the payload by @sivchari in https://github.com/sivchari/rask/pull/21
 
