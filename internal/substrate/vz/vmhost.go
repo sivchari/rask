@@ -39,6 +39,16 @@ import (
 // happens — not relying solely on the "rask create" process (which might
 // itself die without ever sending a Stop) to bound this VM's lifetime.
 func RunVMHost(ctx context.Context, homeDir, name string) error {
+	// Defense in depth: Runtime.Start (this process's usual spawner)
+	// already runs this same check itself before ever exec'ing "rask
+	// __vm-host", so a normal "rask create" never reaches here without the
+	// entitlement — but this hidden subcommand is still directly
+	// invocable, and this is the earliest point that guards that path too.
+	// See checkVirtualizationEntitlement's doc comment.
+	if err := checkVirtualizationEntitlement(); err != nil {
+		return err
+	}
+
 	lock, err := acquireVMLock(homeDir, name)
 	if err != nil {
 		return err

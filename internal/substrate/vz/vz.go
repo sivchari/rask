@@ -133,6 +133,17 @@ func (r *Runtime) diskPath(name string) string {
 // internal/substrate/hostproc.Create's identical prefetch. Pure
 // best-effort, like hostproc's: a failure here never fails Create.
 func (r *Runtime) Create(ctx context.Context, name string, opts substrate.StartOptions) error {
+	// Checked here, before any of Create's own (potentially slow: cold
+	// downloads/builds) prep work, not only in Start: pkg/cluster.Provider
+	// always calls Create before Start, so checking only in Start would
+	// let a cold-cache Create run to completion first — many seconds to
+	// minutes — before ever reporting an entitlement problem that was
+	// knowable up front. See checkVirtualizationEntitlement's doc comment
+	// for what this actually catches.
+	if err := checkVirtualizationEntitlement(); err != nil {
+		return err
+	}
+
 	cache := components.DefaultCache(filepath.Join(r.homeDir, "cache"))
 
 	imagesDone := make(chan struct{})
@@ -220,6 +231,18 @@ func (r *Runtime) Create(ctx context.Context, name string, opts substrate.StartO
 // shared filesystem with the host to read StartOptions.PrebootFiles.Src
 // paths from directly.
 func (r *Runtime) Start(ctx context.Context, name string, opts substrate.StartOptions) (err error) {
+	// Also checked here, not only in Create (which pkg/cluster.Provider
+	// always calls before this): Start is part of substrate.Runtime's
+	// public contract on its own and callers other than Provider are free
+	// to call it without Create — e.g. a future Stop-then-Start restart
+	// path never goes through Create again. See checkVirtualizationEntitlement's
+	// doc comment for why this matters at all, and RunVMHost's own copy of
+	// this same check (defense in depth for "rask __vm-host" invoked
+	// directly rather than through here).
+	if entErr := checkVirtualizationEntitlement(); entErr != nil {
+		return entErr
+	}
+
 	// Fail fast, before creating any state or spawning a vm-host process
 	// at all, if a VM is already running elsewhere on this host: without
 	// this, a doomed Start only discovered the conflict once
