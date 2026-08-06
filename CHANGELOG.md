@@ -1,5 +1,8 @@
 # Changelog
 
+## [v0.1.7](https://github.com/sivchari/rask/compare/v0.1.6...v0.1.7) - 2026-08-06
+- feat(vz): fail fast when the binary lacks the virtualization entitlement by @sivchari in https://github.com/sivchari/rask/pull/15
+
 ## [v0.1.6](https://github.com/sivchari/rask/compare/v0.1.5...v0.1.6) - 2026-08-06
 - feat: ship bundled-only, content-address the caches, add rask pull by @sivchari in https://github.com/sivchari/rask/pull/13
 
