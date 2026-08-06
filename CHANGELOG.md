@@ -1,5 +1,8 @@
 # Changelog
 
+## [v0.1.10](https://github.com/sivchari/rask/compare/v0.1.9...v0.1.10) - 2026-08-06
+- feat: bundle the cluster's container images into the payload by @sivchari in https://github.com/sivchari/rask/pull/21
+
 ## [v0.1.9](https://github.com/sivchari/rask/compare/v0.1.8...v0.1.9) - 2026-08-06
 - feat(cluster): resolve preboot paths per substrate by @sivchari in https://github.com/sivchari/rask/pull/19
 
