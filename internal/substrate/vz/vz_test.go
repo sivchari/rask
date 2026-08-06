@@ -20,8 +20,8 @@ import (
 func TestNew_ReturnsDistinctInstances(t *testing.T) {
 	t.Parallel()
 
-	a := vz.New(t.TempDir())
-	b := vz.New(t.TempDir())
+	a := vz.New(t.TempDir(), nil)
+	b := vz.New(t.TempDir(), nil)
 
 	if a == b {
 		t.Error("New() returned the same instance twice, want independent instances")
@@ -31,7 +31,7 @@ func TestNew_ReturnsDistinctInstances(t *testing.T) {
 func TestRuntime_Stop_NoopWhenNotRunning(t *testing.T) {
 	t.Parallel()
 
-	r := vz.New(t.TempDir())
+	r := vz.New(t.TempDir(), nil)
 
 	if err := r.Stop(context.Background(), "never-started"); err != nil {
 		t.Errorf("Stop on a never-started cluster = %v, want nil (idempotent no-op)", err)
@@ -42,7 +42,7 @@ func TestRuntime_Delete_SucceedsWhenNotRunning(t *testing.T) {
 	t.Parallel()
 
 	homeDir := t.TempDir()
-	r := vz.New(homeDir)
+	r := vz.New(homeDir, nil)
 
 	// Simulate a cluster directory left behind without a running
 	// vm-host (e.g. after Stop already ran).
@@ -64,7 +64,7 @@ func TestRuntime_Delete_ErrorsWhenPIDFilePresent(t *testing.T) {
 	t.Parallel()
 
 	homeDir := t.TempDir()
-	r := vz.New(homeDir)
+	r := vz.New(homeDir, nil)
 
 	clusterDir := filepath.Join(homeDir, "clusters", "dev")
 	if err := os.MkdirAll(clusterDir, 0o755); err != nil {
@@ -110,7 +110,7 @@ func TestRuntime_Delete_TreatsMalformedPIDAsNotRunning(t *testing.T) {
 			t.Parallel()
 
 			homeDir := t.TempDir()
-			r := vz.New(homeDir)
+			r := vz.New(homeDir, nil)
 
 			clusterDir := filepath.Join(homeDir, "clusters", "dev")
 			if err := os.MkdirAll(clusterDir, 0o755); err != nil {
@@ -143,7 +143,7 @@ func TestRuntime_Delete_TreatsMalformedPIDAsNotRunning(t *testing.T) {
 func TestRuntime_ExecWriteFilePortForward_ErrorWhenNotRunning(t *testing.T) {
 	t.Parallel()
 
-	r := vz.New(t.TempDir())
+	r := vz.New(t.TempDir(), nil)
 	ctx := context.Background()
 
 	if _, err := r.Exec(ctx, "never-started", io.Discard, "true"); err == nil {
@@ -298,7 +298,7 @@ func TestRuntime_PortForward_BindsPortZeroAndRelaysData(t *testing.T) {
 	t.Parallel()
 
 	homeDir := t.TempDir()
-	r := vz.New(homeDir)
+	r := vz.New(homeDir, nil)
 
 	agentPort := fakeGuestAgentServer(t)
 	seedRunningCluster(t, homeDir, "dev", agentPort)
@@ -357,7 +357,7 @@ func TestRuntime_PortForward_SecondForwardAfterCancelSucceeds(t *testing.T) {
 	t.Parallel()
 
 	homeDir := t.TempDir()
-	r := vz.New(homeDir)
+	r := vz.New(homeDir, nil)
 
 	agentPort := fakeGuestAgentServer(t)
 	seedRunningCluster(t, homeDir, "dev", agentPort)
@@ -411,7 +411,7 @@ func TestRuntime_PortForward_UpstreamUnreachableStillClosesCleanlyOnCancel(t *te
 	t.Parallel()
 
 	homeDir := t.TempDir()
-	r := vz.New(homeDir)
+	r := vz.New(homeDir, nil)
 
 	agentPort := fakeGuestAgentServer(t)
 	seedRunningCluster(t, homeDir, "dev", agentPort)

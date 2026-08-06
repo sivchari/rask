@@ -41,6 +41,7 @@ import (
 	"github.com/sivchari/rask/internal/cluster"
 	"github.com/sivchari/rask/internal/components"
 	"github.com/sivchari/rask/internal/substrate"
+	"github.com/sivchari/rask/internal/substrate/vz/embedded"
 )
 
 // bootTimeout bounds how long Start waits, once vm-host is spawned, for it
@@ -77,15 +78,21 @@ const bootTimeout = 90 * time.Second
 // Runtime implements substrate.Runtime using a Virtualization.framework VM
 // per cluster.
 type Runtime struct {
-	homeDir string
+	homeDir  string
+	raskInit []byte
 }
 
 var _ substrate.Runtime = (*Runtime)(nil)
 
 // New returns a Runtime for the macOS vz substrate, storing every
-// cluster's state under homeDir (see internal/cluster.Dir).
-func New(homeDir string) *Runtime {
-	return &Runtime{homeDir: homeDir}
+// cluster's state under homeDir (see internal/cluster.Dir). raskInit, if
+// non-nil, is a pkg/cluster consumer's cluster.WithRaskInit injection — the
+// linux/arm64 cmd/rask-init binary bytes Create/Start should embed into
+// every cluster's initramfs instead of relying on this build's own embedded
+// binary (see syncRaskInitOverride). nil for the rask CLI itself, which
+// always cross-compiles a real one at build time.
+func New(homeDir string, raskInit []byte) *Runtime {
+	return &Runtime{homeDir: homeDir, raskInit: raskInit}
 }
 
 func (r *Runtime) dataDir(name string) string {
@@ -146,6 +153,11 @@ func (r *Runtime) Create(ctx context.Context, name string, opts substrate.StartO
 
 	cache := components.DefaultCache(filepath.Join(r.homeDir, "cache"))
 
+	raskInitOverride, err := r.syncRaskInitOverride(cache)
+	if err != nil {
+		return err
+	}
+
 	imagesDone := make(chan struct{})
 
 	go func() {
@@ -153,7 +165,7 @@ func (r *Runtime) Create(ctx context.Context, name string, opts substrate.StartO
 		prefetchImages(ctx, r.homeDir, opts.CoreDNSImage)
 	}()
 
-	_, tmplErr := buildTemplateInitramfs(ctx, cache)
+	_, tmplErr := buildTemplateInitramfs(ctx, cache, raskInitOverride)
 
 	var componentErr error
 
@@ -172,6 +184,56 @@ func (r *Runtime) Create(ctx context.Context, name string, opts substrate.StartO
 	}
 
 	return nil
+}
+
+// syncRaskInitOverride keeps embedded.OverridePath(cache.Dir()) in sync
+// with r.raskInit and returns that same path either way, so both this
+// process's own buildTemplateInitramfs call (Create, above) and the
+// separate "rask __vm-host" process's redundant one (vmhost.go's
+// RunVMHost) can pass it to embedded.Resolve unconditionally: Resolve
+// treats a missing file at that path as "no override", so neither caller
+// needs to branch on whether r.raskInit was actually set.
+//
+//   - r.raskInit set (a cluster.WithRaskInit injection): validated with
+//     embedded.ValidateRaskInit and written to the override path. Invalid
+//     bytes fail here, immediately, rather than degrading into an opaque
+//     boot timeout once RunVMHost eventually tries and fails to boot a
+//     guest with them.
+//   - r.raskInit nil: any override file left behind by an earlier
+//     Provider construction against this same homeDir is removed, so a
+//     plain (non-WithRaskInit) Runtime never silently inherits a previous
+//     run's injected rask-init — homeDir's cache directory persists across
+//     Provider instances (e.g. a library caller today, the rask CLI
+//     tomorrow, against the same ~/.rask).
+func (r *Runtime) syncRaskInitOverride(cache *components.Cache) (string, error) {
+	path := embedded.OverridePath(cache.Dir())
+
+	if r.raskInit == nil {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return "", fmt.Errorf("vz: removing stale rask-init override %s: %w", path, err)
+		}
+
+		return path, nil
+	}
+
+	if err := embedded.ValidateRaskInit(r.raskInit); err != nil {
+		return "", fmt.Errorf("vz: invalid rask-init supplied via cluster.WithRaskInit: %w", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", fmt.Errorf("vz: creating %s: %w", filepath.Dir(path), err)
+	}
+
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, r.raskInit, 0o644); err != nil {
+		return "", fmt.Errorf("vz: writing %s: %w", tmpPath, err)
+	}
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		return "", fmt.Errorf("vz: finalizing %s: %w", path, err)
+	}
+
+	return path, nil
 }
 
 // Start first fails fast (see the peekVMLock check below) if a VM is
@@ -395,28 +457,46 @@ func (r *Runtime) spawnVMHost(name string) (pid int, err error) {
 		return 0, fmt.Errorf("vz: starting vm-host process: %w", err)
 	}
 
-	// Capture the pid before Release(): os.Process.Release's doc comment
-	// says outright that, "for historical reasons, on systems other than
-	// Windows, Release sets the Pid field to -1" — reading cmd.Process.Pid
-	// after Release() therefore always returns -1, which every caller of
-	// spawnVMHost writes straight into the cluster's pidfile. readPID's
-	// pid<=0 guard silently swallows that instead of erroring, so Stop/
-	// Delete believe there is nothing to terminate and no-op successfully
-	// while the real vm-host process (and its VM) keeps running, unowned.
-	// Found live during this session: every vm-host process this session
-	// had a "-1" (or otherwise wrong) pidfile from the moment it started,
-	// and every prior "successful" rask delete on a vz cluster was actually
-	// a no-op that happened to look fine only because the orphaned process
-	// was separately killed by hand each time.
+	// Capture the pid before anything below that could invalidate
+	// cmd.Process.Pid: os.Process.Release's doc comment says outright that,
+	// "for historical reasons, on systems other than Windows, Release sets
+	// the Pid field to -1" — reading cmd.Process.Pid after Release()
+	// therefore always returns -1, which every caller of spawnVMHost writes
+	// straight into the cluster's pidfile. readPID's pid<=0 guard silently
+	// swallows that instead of erroring, so Stop/Delete believe there is
+	// nothing to terminate and no-op successfully while the real vm-host
+	// process (and its VM) keeps running, unowned. Found live during a
+	// previous session: every vm-host process that session had a "-1" (or
+	// otherwise wrong) pidfile from the moment it started, and every prior
+	// "successful" rask delete on a vz cluster was actually a no-op that
+	// happened to look fine only because the orphaned process was
+	// separately killed by hand each time.
 	pid = cmd.Process.Pid
 
-	// The child is now detached; releasing it here (rather than holding
-	// onto *exec.Cmd and calling Wait) avoids leaving a zombie once this
-	// short-lived CLI process exits, since nothing in this process will
-	// ever call Wait on it.
-	if err := cmd.Process.Release(); err != nil {
-		return 0, fmt.Errorf("vz: releasing vm-host process: %w", err)
-	}
+	// The child is now detached (Setsid, above); reap it asynchronously
+	// rather than calling cmd.Process.Release(). Release() only stops this
+	// package's own bookkeeping of the child — it does not wait(2) it, so
+	// nothing reaps it once it exits. For the rask CLI's own short-lived
+	// "rask create" invocation, that's harmless: the process exits moments
+	// later anyway, and the kernel reparents (and macOS's launchd
+	// promptly reaps) any remaining zombie child once its parent exits.
+	// But a pkg/cluster.Provider caller is not guaranteed to be short-lived
+	// — the whole point of the library is driving Create *and* a later
+	// Stop/Delete of the very same cluster from one long-running process
+	// (e.g. fjord). In that shape, this process stays alive across both
+	// calls, so nothing ever reparents the zombie away: found live testing
+	// exactly this — terminateVMHost's SIGKILL was delivered and the
+	// process genuinely exited, but Stop still reported "did not exit even
+	// after SIGKILL", because a zombie (exited, not yet reaped) still
+	// answers kill(pid, 0) successfully — processAlive can't tell "still
+	// running" from "exited but nobody called wait(2) on it" apart. This
+	// goroutine is that wait(2): it simply blocks until the child actually
+	// exits (whenever that is — this VM may run for hours) and discards
+	// the result, which is exactly what turns a lingering zombie back into
+	// "not alive" for processAlive's kill(pid, 0) checks to see correctly,
+	// in both the short-lived-CLI and long-lived-library-caller cases
+	// alike.
+	go func() { _, _ = cmd.Process.Wait() }()
 
 	return pid, nil
 }

@@ -35,7 +35,10 @@ type Provider struct {
 
 // NewProvider returns a Provider storing cluster state under homeDir. If
 // homeDir is empty, the default (~/.rask, matching the rask CLI) is used.
-func NewProvider(homeDir string) (*Provider, error) {
+//
+// opts configures optional behavior; see e.g. WithRaskInit for macOS's
+// vz substrate, the only one that currently accepts an option.
+func NewProvider(homeDir string, opts ...ProviderOption) (*Provider, error) {
 	if homeDir == "" {
 		hd, err := internalcluster.DefaultHomeDir()
 		if err != nil {
@@ -45,7 +48,17 @@ func NewProvider(homeDir string) (*Provider, error) {
 		homeDir = hd
 	}
 
-	return &Provider{rt: newPlatformRuntime(homeDir), homeDir: homeDir}, nil
+	cfg := providerConfig{}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
+	rt, err := newPlatformRuntime(homeDir, cfg.raskInit)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Provider{rt: rt, homeDir: homeDir}, nil
 }
 
 // NewProviderWithRuntime returns a Provider backed by rt directly, bypassing

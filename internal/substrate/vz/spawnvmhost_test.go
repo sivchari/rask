@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // TestProcessRelease_MustCapturePidBeforeCalling documents and guards the
@@ -99,5 +100,61 @@ func TestSpawnVMHost_DetachesIntoNewSession(t *testing.T) {
 
 	if childSID != childPID {
 		t.Fatalf("child session id = %d, want %d (its own pid): Setsid should make the child the leader of a brand new session", childSID, childPID)
+	}
+}
+
+// TestSpawnVMHost_UnreapedExitedChildStillAnswersProcessAlive is the
+// regression test for a bug found live testing pkg/cluster as a library
+// end to end: terminateVMHost's SIGKILL was delivered and the vm-host
+// process genuinely exited, yet Stop still reported "did not exit even
+// after SIGKILL". Root cause was spawnVMHost's original
+// cmd.Process.Release() call, which stops this package's own bookkeeping
+// of the child but never wait(2)s it — POSIX leaves an exited-but-unreaped
+// child as a zombie, and kill(pid, 0) (processAlive's own liveness check)
+// still succeeds against a zombie's pid, since the pid is not freed until
+// something reaps it. This was invisible for the rask CLI's own
+// short-lived "rask create" (its own process exit reparents any zombie
+// child to launchd, which promptly reaps it), but not for a
+// pkg/cluster.Provider caller that stays alive across both Create and a
+// later Stop/Delete of the same cluster within one long-running process
+// (rask's actual target library use case, e.g. fjord) — nothing reparents
+// the zombie away in that shape.
+//
+// This proves the underlying OS behavior spawnVMHost's fix (an async
+// cmd.Process.Wait() instead of Release() — see its doc comment) depends
+// on, against a real child process rather than spawnVMHost itself (which
+// shells out to os.Executable() and is not a substitutable target for a
+// unit test — see this file's other tests for the same constraint):
+// processAlive reports an exited-but-unreaped child as alive until
+// something actually reaps it.
+func TestSpawnVMHost_UnreapedExitedChildStillAnswersProcessAlive(t *testing.T) {
+	t.Parallel()
+
+	cmd := exec.Command("/usr/bin/true")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("starting child: %v", err)
+	}
+
+	pid := cmd.Process.Pid
+
+	// Give the child (a no-op binary) ample time to actually exit, without
+	// this test process ever calling Wait — mirroring the pre-fix
+	// spawnVMHost, which released the child instead.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if !processAlive(pid) {
+		t.Fatal("processAlive(pid) = false for an exited-but-unreaped (zombie) child, want true — this test's premise (that a zombie still answers kill(pid, 0)) does not hold on this platform")
+	}
+
+	// The fix: reap it. processAlive must now correctly report it gone.
+	if _, err := cmd.Process.Wait(); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+
+	if processAlive(pid) {
+		t.Error("processAlive(pid) = true after reaping the child with Wait, want false")
 	}
 }

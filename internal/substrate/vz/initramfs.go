@@ -227,6 +227,13 @@ const templateInitramfsBuildTimeout = 8 * time.Minute
 // iptables and e2fsprogs userland bundles merged at the guest root, and a
 // CA certificate bundle.
 //
+// raskInitOverridePath is passed straight through to embedded.Resolve — see
+// that function's doc comment for the full resolution order. Both callers
+// (Runtime.Create and RunVMHost) pass the same embedded.OverridePath(cache.Dir())
+// unconditionally, whether or not cluster.WithRaskInit was actually used:
+// Resolve treats a missing file at that path as "no override" and falls
+// through, so neither caller needs to know which case it's in.
+//
 // Per-cluster state (only the cluster name and boot wall-clock time for v1
 // — see runCommandLine) travels via the kernel command line, not a second,
 // per-cluster cpio archive concatenated onto this one: everything else
@@ -238,15 +245,16 @@ const templateInitramfsBuildTimeout = 8 * time.Minute
 // create/delete, not save/restore, and reusing
 // internal/bootstrap.Boot completely unmodified is both simpler and
 // consistent with hostproc's proven implementation.
-func buildTemplateInitramfs(ctx context.Context, cache *components.Cache) (string, error) {
+func buildTemplateInitramfs(ctx context.Context, cache *components.Cache, raskInitOverridePath string) (string, error) {
 	// Resolved here, up front, rather than inside resolveTemplateInputs's
 	// concurrent fetch group below: unlike every other input,
-	// embedded.Resolve is always local (an in-memory go:embed or a small
-	// file read via $RASK_INIT_BINARY — see that function's doc comment),
-	// never network I/O, so resolving it here costs nothing and lets
-	// templateInitramfsKey below hash its actual bytes before deciding
-	// whether a network fetch is even needed for anything else.
-	raskInitBinary, err := embedded.Resolve()
+	// embedded.Resolve is always local (an in-memory go:embed, an
+	// injected-bytes override file, or a small file read via
+	// $RASK_INIT_BINARY — see that function's doc comment), never network
+	// I/O, so resolving it here costs nothing and lets templateInitramfsKey
+	// below hash its actual bytes before deciding whether a network fetch
+	// is even needed for anything else.
+	raskInitBinary, err := embedded.Resolve(raskInitOverridePath)
 	if err != nil {
 		return "", fmt.Errorf("vz: resolving rask-init: %w", err)
 	}

@@ -9,6 +9,39 @@ const (
 	WaitCoreDNS = "coredns"
 )
 
+// ProviderOption configures NewProvider.
+type ProviderOption func(*providerConfig)
+
+// providerConfig accumulates ProviderOption values before NewProvider
+// constructs the platform substrate.Runtime.
+type providerConfig struct {
+	raskInit []byte
+}
+
+// WithRaskInit supplies the linux/arm64 cmd/rask-init binary bytes a Go
+// module consumer cross-compiled at build time, so Provider.Create doesn't
+// depend on rask's own embedded binary (a placeholder in every module
+// consumer's checkout — see this package's doc comment) or the
+// $RASK_INIT_BINARY debug escape hatch. Build one with:
+//
+//	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o internal/embedded/rask-init github.com/sivchari/rask/cmd/rask-init
+//
+// and embed it with a //go:embed directive in your own module, e.g.:
+//
+//	//go:embed internal/embedded/rask-init
+//	var raskInit []byte
+//
+// Validated immediately (non-empty, ELF magic, not rask's own placeholder)
+// by NewProvider — an invalid injection is reported as a construction
+// error, not discovered later as an opaque VM boot timeout.
+//
+// Ignored on Linux: internal/substrate/hostproc runs every cluster
+// component directly on the host and has no rask-init/initramfs concept
+// for these bytes to feed.
+func WithRaskInit(data []byte) ProviderOption {
+	return func(c *providerConfig) { c.raskInit = data }
+}
+
 // Options configures Provider.Create. Every field mirrors a "rask create
 // cluster" flag (see cmd/rask/create.go); a consumer driving rask as a
 // library has the identical set of knobs a consumer shelling out to the CLI

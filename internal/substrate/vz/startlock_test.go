@@ -49,7 +49,7 @@ func TestRuntime_Start_FailsFastWhenAnotherVMRunning(t *testing.T) {
 	}
 	defer lock.Release()
 
-	r := New(homeDir)
+	r := New(homeDir, nil)
 
 	start := time.Now()
 	err = r.Start(context.Background(), "t1", substrate.StartOptions{})
