@@ -150,7 +150,10 @@ func (r *Runtime) diskPath(name string) string {
 // manifest bundle needs (or opts.CoreDNSImage, if set) is prefetched into a
 // host-wide cache — see imageprefetch.go — mirroring
 // internal/substrate/hostproc.Create's identical prefetch. Pure
-// best-effort, like hostproc's: a failure here never fails Create.
+// best-effort, like hostproc's: a failure here never fails Create. On a
+// bundled binary, that prefetch resolves from this build's embedded
+// payload before ever reaching the network, exactly like hostproc's own
+// (see internal/imagebundle.Cache.Lookup's installFromPayload).
 func (r *Runtime) Create(ctx context.Context, name string, opts substrate.StartOptions) error {
 	// Checked here, before any of Create's own (potentially slow: cold
 	// downloads/builds) prep work, not only in Start: pkg/cluster.Provider

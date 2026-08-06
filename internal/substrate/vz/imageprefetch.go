@@ -83,6 +83,15 @@ func prefetchImages(ctx context.Context, homeDir, coreDNSImage string) {
 // that one image. Returns a zero-length (but non-nil) slice if nothing is
 // cached at all, mirroring every other overlay builder's contract (see
 // buildPrebootCpio).
+//
+// Deliberately a separate, per-cluster cpio concatenated onto the shared
+// template initramfs (see vz.go's Start) rather than baked into
+// buildTemplateInitramfs itself: the template is unpacked into guest RAM on
+// every boot, and it's shared host-wide across every cluster, so adding
+// image archives to it would pay their RAM/unpack cost on every single
+// cluster boot — including ones that never schedule the pod that needs a
+// given image — instead of once per host, on demand, the way this overlay
+// (built fresh from whatever prefetchImages already cached) does.
 func buildImagesOverlayCpio(homeDir, coreDNSImage string) ([]byte, error) {
 	cache := imagebundle.NewCache(imageCacheDir(homeDir))
 	guestPrefix := strings.TrimPrefix(guestlayout.ImagesDir, "/")
