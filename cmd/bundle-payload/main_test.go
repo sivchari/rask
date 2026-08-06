@@ -129,6 +129,86 @@ func TestWriteManifest_RoundTripsThroughBundlepayloadManifest(t *testing.T) {
 	}
 }
 
+func TestClearStalePayload_RemovesPriorTargetDebrisButKeepsGitkeep(t *testing.T) {
+	t.Parallel()
+
+	out := t.TempDir()
+	payloadDir := filepath.Join(out, "payload")
+
+	if err := os.MkdirAll(payloadDir, 0o755); err != nil {
+		t.Fatalf("seeding payload dir: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(payloadDir, ".gitkeep"), nil, 0o644); err != nil {
+		t.Fatalf("seeding .gitkeep: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("amd64-blob"))
+	}))
+	defer srv.Close()
+
+	// Simulate a completed prior run (linux/amd64) having staged a blob,
+	// an image, and a manifest into out/payload — exactly what run() does
+	// before a second, different -target invocation against the same out
+	// (goreleaser's rask-bundled-amd64 then rask-bundled-arm64 hooks).
+	blobDest := filepath.Join(payloadDir, "blobs", "kubectl")
+	if err := download(context.Background(), srv.Client(), srv.URL, blobDest); err != nil {
+		t.Fatalf("seeding prior-target blob: %v", err)
+	}
+
+	imageDest := filepath.Join(payloadDir, "images", "amd64", "pause.tar")
+	if err := os.MkdirAll(filepath.Dir(imageDest), 0o755); err != nil {
+		t.Fatalf("seeding prior-target image dir: %v", err)
+	}
+
+	if err := os.WriteFile(imageDest, []byte("amd64-image"), 0o644); err != nil {
+		t.Fatalf("seeding prior-target image: %v", err)
+	}
+
+	priorManifest := &bundlepayload.Manifest{
+		OS:         "linux",
+		Arch:       "amd64",
+		K8sVersion: "v1.33.13",
+		URLs:       map[string]string{srv.URL: "payload/blobs/kubectl"},
+	}
+	if err := writeManifest(filepath.Join(payloadDir, "manifest.json"), priorManifest); err != nil {
+		t.Fatalf("seeding prior manifest: %v", err)
+	}
+
+	// The next invocation (linux/arm64) clears out/payload before staging
+	// anything, exactly as run() does.
+	if err := clearStalePayload(out); err != nil {
+		t.Fatalf("clearStalePayload: %v", err)
+	}
+
+	if _, err := os.Stat(blobDest); !os.IsNotExist(err) {
+		t.Errorf("prior target's blob still present after clearStalePayload: %v", err)
+	}
+
+	if _, err := os.Stat(imageDest); !os.IsNotExist(err) {
+		t.Errorf("prior target's image still present after clearStalePayload: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(payloadDir, "manifest.json")); !os.IsNotExist(err) {
+		t.Errorf("prior target's manifest.json still present after clearStalePayload: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(payloadDir, ".gitkeep")); err != nil {
+		t.Errorf(".gitkeep missing after clearStalePayload: %v", err)
+	}
+}
+
+func TestClearStalePayload_MissingPayloadDirIsNotAnError(t *testing.T) {
+	t.Parallel()
+
+	out := t.TempDir() // payload/ never created, as on a fresh checkout.
+
+	if err := clearStalePayload(out); err != nil {
+		t.Fatalf("clearStalePayload on a never-staged -out: %v", err)
+	}
+}
+
 func TestTargets_GuestOnlyForDarwinArm64(t *testing.T) {
 	t.Parallel()
 

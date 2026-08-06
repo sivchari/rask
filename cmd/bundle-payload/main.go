@@ -27,8 +27,14 @@
 // linux/arm64 never touch it (internal/substrate/hostproc runs Kubernetes
 // components directly as host processes).
 //
-// Re-running with the same -target and -out resumes: a blob already
-// present on disk from a prior partial run is not re-downloaded.
+// Every run clears out/payload before staging anything (see
+// clearStalePayload), so it never resumes a prior run and always
+// re-fetches every blob and image from scratch: goreleaser runs
+// rask-bundled-amd64 then rask-bundled-arm64 sequentially against the same
+// checkout (see .goreleaser.yml, --parallelism 1), and without clearing
+// first, a blob staged for one target is indistinguishable on disk from
+// one staged for another, so go:embed all:payload (fs_bundle.go) would
+// bundle whichever target ran first into whichever target ran last too.
 package main
 
 import (
@@ -83,6 +89,10 @@ func run() error {
 		return fmt.Errorf("-target must be one of linux/amd64, linux/arm64, darwin/arm64; got %q", *targetFlag)
 	}
 
+	if err := clearStalePayload(*out); err != nil {
+		return fmt.Errorf("clearing stale payload in %s: %w", *out, err)
+	}
+
 	urls := components.PinnedURLs(*k8sVersion, tgt.arch, tgt.guest)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
@@ -130,10 +140,60 @@ func run() error {
 	return nil
 }
 
+// clearStalePayload removes everything under out/payload left by a prior
+// run — blobs, staged images, manifest.json — except the git-tracked
+// out/payload/.gitkeep placeholder: removing that too would leave a
+// tracked file missing from the checkout, and payload/ must still exist
+// for fs_bundle.go's `//go:embed all:payload` to have somewhere to embed
+// from even on an unstaged tree (see that file's doc comment). out/payload
+// not existing yet (a fresh checkout, or a -out never staged into) is not
+// an error.
+//
+// This is what actually fixes cross-target contamination: download()
+// below only skips a URL it finds already at dest, with no idea whether
+// that file was staged for this -target or a different one, so leaving a
+// prior run's files in place lets go:embed all:payload silently bundle
+// them into a target that never asked for them.
+//
+// This intentionally does not try to distinguish "prior run staged this
+// exact -target" from "prior run staged a different -target": it always
+// clears, so every invocation re-downloads its full target from scratch.
+// bundle-payload has no separate host-side download cache the way a
+// running rask does (components.DefaultCache layers ~/.rask/cache in
+// front of network fetches — see internal/components/defaultcache.go —
+// but this command's plain http.Client never goes through it), so that
+// re-download cost is unavoidable here.
+func clearStalePayload(out string) error {
+	dir := filepath.Join(out, "payload")
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+
+		return err
+	}
+
+	for _, e := range entries {
+		if e.Name() == ".gitkeep" {
+			continue
+		}
+
+		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {
+			return fmt.Errorf("removing stale %s: %w", e.Name(), err)
+		}
+	}
+
+	return nil
+}
+
 // download fetches url into dest, skipping the request entirely if dest
-// already exists (a prior run staged it — see this command's doc comment
-// on resuming) and writing via a same-directory temp file plus rename so a
-// killed/interrupted run never leaves a truncated blob at dest.
+// already exists — clearStalePayload has already wiped out/payload before
+// run's loop calls this, so in practice that only happens if the same
+// dest is requested twice within one run — and writing via a
+// same-directory temp file plus rename so a killed/interrupted run never
+// leaves a truncated blob at dest.
 func download(ctx context.Context, client *http.Client, url, dest string) error {
 	if _, err := os.Stat(dest); err == nil {
 		return nil

@@ -37,8 +37,9 @@ codesign: build
 # bundle-payload downloads and stages internal/components/bundlepayload/
 # payload for one platform (TARGET), so a later `make bundle` has something
 # real to embed. Network-heavy (dl.k8s.io/GitHub/Alpine, up to ~1GB for
-# TARGET=darwin/arm64's guest userland); safe to re-run, it resumes rather
-# than re-downloading already-staged blobs (see cmd/bundle-payload).
+# TARGET=darwin/arm64's guest userland); every run clears whatever a prior
+# run staged first, so re-running always re-downloads everything rather
+# than resuming (see cmd/bundle-payload's doc comment on why).
 #
 #   make bundle-payload TARGET=linux/amd64
 #   make bundle-payload TARGET=darwin/arm64 K8S_VERSION=v1.34.0
