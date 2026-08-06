@@ -4,6 +4,8 @@ package vz
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"os"
@@ -21,28 +23,29 @@ import (
 )
 
 // resolvedTemplateInputs is buildTemplateInitramfs's resolve phase output:
-// every component the assembled cpio below needs, fetched concurrently by
-// resolveTemplateInputs.
+// every component the assembled cpio below needs (besides rask-init itself,
+// resolved separately — see buildTemplateInitramfs), fetched concurrently
+// by resolveTemplateInputs.
 type resolvedTemplateInputs struct {
-	raskInitBinary []byte
-	paths          *components.Paths
-	kernel         *components.GuestKernel
-	iptables       *components.IPTablesBundle
-	e2fsprogs      *components.E2fsprogsBundle
-	caBundlePath   string
-	gcompat        *components.GCompatBundle
-	busybox        *components.BusyboxBundle
+	paths        *components.Paths
+	kernel       *components.GuestKernel
+	iptables     *components.IPTablesBundle
+	e2fsprogs    *components.E2fsprogsBundle
+	caBundlePath string
+	gcompat      *components.GCompatBundle
+	busybox      *components.BusyboxBundle
 }
 
 // resolveTemplateInputs fetches everything buildTemplateInitramfs needs to
-// assemble the template initramfs — rask-init, Kubernetes components, the
-// guest kernel, and the iptables/e2fsprogs/CA/gcompat/busybox bundles —
-// concurrently rather than one at a time: on a cold cache (the only time
-// any of this touches the network — see the cache-hit check above) these
-// eight resolutions are entirely independent of one another, so serializing
-// them needlessly multiplies cold-start latency by eight for no benefit.
-// Bounded by templateInitramfsBuildTimeout, not by whatever's left of the
-// caller's own ctx budget (see that constant's doc comment for why).
+// assemble the template initramfs besides rask-init — Kubernetes
+// components, the guest kernel, and the iptables/e2fsprogs/CA/gcompat/
+// busybox bundles — concurrently rather than one at a time: on a cold
+// cache (the only time any of this touches the network — see the
+// cache-hit check above) these seven resolutions are entirely independent
+// of one another, so serializing them needlessly multiplies cold-start
+// latency by seven for no benefit. Bounded by templateInitramfsBuildTimeout,
+// not by whatever's left of the caller's own ctx budget (see that
+// constant's doc comment for why).
 //
 // Prints a short progress line per component to stderr as each starts and
 // once more when all are ready: this phase is the only part of a "rask
@@ -50,7 +53,7 @@ type resolvedTemplateInputs struct {
 // that long in total silence is indistinguishable, from the outside, from
 // having hung — found to matter directly during this investigation.
 func resolveTemplateInputs(ctx context.Context, cache *components.Cache) (*resolvedTemplateInputs, error) {
-	fmt.Fprintln(os.Stderr, "vz: building the template initramfs for the first time on this host (downloading rask-init, Kubernetes components, the guest kernel, and a few Alpine bundles — later clusters reuse this instantly)...")
+	fmt.Fprintln(os.Stderr, "vz: building the template initramfs for the first time on this host (downloading Kubernetes components, the guest kernel, and a few Alpine bundles — later clusters reuse this instantly)...")
 
 	resolveCtx, cancel := context.WithTimeout(ctx, templateInitramfsBuildTimeout)
 	defer cancel()
@@ -58,23 +61,6 @@ func resolveTemplateInputs(ctx context.Context, cache *components.Cache) (*resol
 	in := &resolvedTemplateInputs{}
 
 	g, gctx := errgroup.WithContext(resolveCtx)
-
-	g.Go(func() (err error) {
-		fmt.Fprintln(os.Stderr, "vz:   resolving rask-init...")
-
-		// Resolved here, not before this function's cache-hit check runs
-		// (see buildTemplateInitramfs): a warm cachePath there already has
-		// rask-init baked in, so an already-built template initramfs must
-		// never require a real rask-init binary (env var, build, or
-		// download) to be available at all — see embedded.Resolve's doc
-		// comment for the fallback chain this triggers when it isn't.
-		in.raskInitBinary, err = embedded.Resolve(gctx, cache.Dir())
-		if err != nil {
-			return fmt.Errorf("vz: resolving rask-init: %w", err)
-		}
-
-		return nil
-	})
 
 	g.Go(func() (err error) {
 		fmt.Fprintln(os.Stderr, "vz:   resolving Kubernetes components...")
@@ -162,13 +148,55 @@ func resolveTemplateInputs(ctx context.Context, cache *components.Cache) (*resol
 	return in, nil
 }
 
-// templateInitramfsVersion is bumped whenever anything that changes the
-// template initramfs's content changes (a new components version pin, a
-// new guestinit.WantedModules entry, a new rask-init build) — the cached
-// file at cacheDir/vz-initramfs-template-<version>.cpio is otherwise reused
-// forever, so a version that silently went stale would boot a stale guest
-// without any error.
-const templateInitramfsVersion = "v15"
+// templateInitramfsKey derives buildTemplateInitramfs's cache filename
+// (cacheDir/vz-initramfs-template-<key>.cpio) from every input that can
+// change the template's content: the actual rask-init bytes that become
+// /init, plus every pinned component/bundle version and guest layout
+// constant baked into the archive. An already-built template is otherwise
+// reused forever, so a stale key would boot a stale guest with no error —
+// this bit us twice in real E2E runs with the previous scheme, a
+// hand-maintained version constant ("v15") someone had to remember to bump
+// on every content change and, twice, didn't. A key derived directly from
+// the actual inputs can't go stale that way: any change to any of them
+// changes the key, and identical inputs always produce the same key, so a
+// warm cache is still reused exactly as before.
+//
+// Deliberately does not hash the actual downloaded bytes of the Kubernetes/
+// kine/runc/containerd/CNI binaries, the guest kernel, or the iptables/
+// e2fsprogs/gcompat/busybox bundles: doing so would require fetching them
+// before this function's cache-hit check even runs, defeating the entire
+// point of a fast, network-free path on a warm cache. Their pinned version
+// (and, where pinned, checksum) constants already fully determine their
+// content by construction — see e.g. components.KineVersion and
+// components.IPTablesBundleKey — so hashing those instead is equivalent
+// and free. The CA bundle is the one exception, deliberately excluded:
+// EnsureCABundle intentionally has no version pin at all (it always wants
+// curl.se's current root store — see that function's doc comment), so
+// there is nothing static to hash for it; its own cache entry is already
+// separately idempotent (fetched once, reused until the cache is cleared),
+// independent of this key.
+func templateInitramfsKey(raskInitBinary []byte) string {
+	h := sha256.New()
+
+	raskInitSum := sha256.Sum256(raskInitBinary)
+	fmt.Fprintf(h, "rask-init:%x\n", raskInitSum)
+
+	fmt.Fprintf(h, "k8s:%s\n", components.DefaultK8sVersion)
+	fmt.Fprintf(h, "kine:%s\n", components.KineVersion)
+	fmt.Fprintf(h, "runc:%s\n", components.RuncVersion)
+	fmt.Fprintf(h, "containerd:%s\n", components.ContainerdVersion)
+	fmt.Fprintf(h, "cni-plugins:%s\n", components.CNIPluginsVersion)
+	fmt.Fprintf(h, "guest-kernel:%s\n", components.GuestKernelKey)
+	fmt.Fprintf(h, "iptables:%s\n", components.IPTablesBundleKey)
+	fmt.Fprintf(h, "e2fsprogs:%s\n", components.E2fsprogsBundleKey)
+	fmt.Fprintf(h, "gcompat:%s\n", components.GCompatBundleKey)
+	fmt.Fprintf(h, "busybox:%s\n", components.BusyboxBundleKey)
+
+	fmt.Fprintf(h, "modules:%s\n", strings.Join(guestinit.WantedModules, ","))
+	fmt.Fprintf(h, "layout:%s|%s|%s|%s\n", guestlayout.BinDir, guestlayout.CNIBinDir, guestlayout.ModulesDir, guestlayout.CACertPath)
+
+	return hex.EncodeToString(h.Sum(nil))[:16]
+}
 
 // templateInitramfsBuildTimeout bounds buildTemplateInitramfs's resolve
 // phase below (rask-init, Kubernetes components, guest kernel,
@@ -211,7 +239,20 @@ const templateInitramfsBuildTimeout = 8 * time.Minute
 // internal/bootstrap.Boot completely unmodified is both simpler and
 // consistent with hostproc's proven implementation.
 func buildTemplateInitramfs(ctx context.Context, cache *components.Cache) (string, error) {
-	cachePath := filepath.Join(cache.Dir(), fmt.Sprintf("vz-initramfs-template-%s.cpio", templateInitramfsVersion))
+	// Resolved here, up front, rather than inside resolveTemplateInputs's
+	// concurrent fetch group below: unlike every other input,
+	// embedded.Resolve is always local (an in-memory go:embed or a small
+	// file read via $RASK_INIT_BINARY — see that function's doc comment),
+	// never network I/O, so resolving it here costs nothing and lets
+	// templateInitramfsKey below hash its actual bytes before deciding
+	// whether a network fetch is even needed for anything else.
+	raskInitBinary, err := embedded.Resolve()
+	if err != nil {
+		return "", fmt.Errorf("vz: resolving rask-init: %w", err)
+	}
+
+	key := templateInitramfsKey(raskInitBinary)
+	cachePath := filepath.Join(cache.Dir(), fmt.Sprintf("vz-initramfs-template-%s.cpio", key))
 
 	if _, err := os.Stat(cachePath); err == nil {
 		return cachePath, nil
@@ -224,7 +265,7 @@ func buildTemplateInitramfs(ctx context.Context, cache *components.Cache) (strin
 
 	w := newCpioWriter()
 
-	if err := w.WriteFile("init", 0o755, in.raskInitBinary); err != nil {
+	if err := w.WriteFile("init", 0o755, raskInitBinary); err != nil {
 		return "", fmt.Errorf("vz: writing /init: %w", err)
 	}
 

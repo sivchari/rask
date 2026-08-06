@@ -15,9 +15,11 @@ import (
 // other deps.
 var busyboxPackage = iptablesPackage{name: "busybox", version: "1.37.0-r14", sha256: "35e35183161c613ef50c61fcd96a0bee1a4d4ac60127d4c4941e83c0e0cdf028"}
 
-// BusyboxBundleVersion identifies this pinned package for cache directory
-// naming.
-const BusyboxBundleVersion = "1.37.0-r14"
+// BusyboxBundleKey is a content-addressed identifier for busyboxPackage
+// (see packageSetKey), used both for this bundle's own cache directory
+// name and as an input to internal/substrate/vz's template initramfs
+// cache key.
+var BusyboxBundleKey = packageSetKey([]iptablesPackage{busyboxPackage})
 
 // busyboxMountApplets are the busybox applet names rask-init needs
 // available as symlinks to bin/busybox (busybox dispatches by argv[0],
@@ -51,7 +53,7 @@ type BusyboxBundle struct {
 // extracts the busybox binary, creating the busyboxMountApplets symlinks
 // at usr/sbin/<applet> -> ../../bin/busybox.
 func (c *Cache) EnsureBusyboxBundle(ctx context.Context) (*BusyboxBundle, error) {
-	dir := filepath.Join(c.dir, "busybox-"+BusyboxBundleVersion)
+	dir := filepath.Join(c.dir, "busybox-"+BusyboxBundleKey)
 	marker := filepath.Join(dir, "bin", "busybox")
 
 	if _, err := os.Stat(marker); err == nil {

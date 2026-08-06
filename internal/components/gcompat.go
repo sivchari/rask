@@ -33,9 +33,11 @@ var gcompatPackages = []iptablesPackage{
 	{name: "gcompat", version: "1.1.0-r4", sha256: "9051217a6d513c9a29c4d183244eb864b108a3daf9e14ec51a6d6712d009ce4e"},
 }
 
-// GCompatBundleVersion identifies this pinned package set for cache
-// directory naming.
-const GCompatBundleVersion = "1.1.0-r4"
+// GCompatBundleKey is a content-addressed identifier for gcompatPackages
+// (see packageSetKey), used both for this bundle's own cache directory
+// name and as an input to internal/substrate/vz's template initramfs
+// cache key.
+var GCompatBundleKey = packageSetKey(gcompatPackages)
 
 // GCompatBundle is the resolved, merged file tree containing
 // /lib/ld-linux-aarch64.so.1 and every glibc-compat shared library
@@ -50,7 +52,7 @@ type GCompatBundle struct {
 // tree, preserving their internal symlinks (e.g. lib/libc.so.6 ->
 // libgcompat.so.0).
 func (c *Cache) EnsureGCompatBundle(ctx context.Context) (*GCompatBundle, error) {
-	dir := filepath.Join(c.dir, "gcompat-"+GCompatBundleVersion)
+	dir := filepath.Join(c.dir, "gcompat-"+GCompatBundleKey)
 	marker := filepath.Join(dir, "lib", "ld-linux-aarch64.so.1")
 
 	if _, err := os.Stat(marker); err == nil {

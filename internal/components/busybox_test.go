@@ -12,7 +12,7 @@ func TestEnsureBusyboxBundle_CacheHitSkipsDownload(t *testing.T) {
 
 	c := NewCache(t.TempDir())
 
-	dir := filepath.Join(c.dir, "busybox-"+BusyboxBundleVersion)
+	dir := filepath.Join(c.dir, "busybox-"+BusyboxBundleKey)
 	if err := os.MkdirAll(filepath.Join(dir, "bin"), 0o755); err != nil {
 		t.Fatalf("seeding cache dir: %v", err)
 	}
