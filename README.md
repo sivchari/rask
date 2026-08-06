@@ -33,7 +33,11 @@ Verify against the matching `rask_<version>_checksums.txt` /
 
 Building from source: `make codesign` (macOS, build + sign) or `make
 build` (Linux) produces a plain binary that downloads components on first
-use instead — a developer convenience, not a released artifact.
+use instead — a developer convenience, not a released artifact. On macOS,
+a source build must be signed with the `com.apple.security.virtualization`
+entitlement (`make codesign` does this) — released binaries are already
+signed; a plain `go build`/`make build` is not, and fails fast on `rask
+create` with instructions to fix it.
 
 ## Quick start
 

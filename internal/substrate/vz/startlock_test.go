@@ -31,6 +31,14 @@ const startLockFailFastBudget = time.Second
 func TestRuntime_Start_FailsFastWhenAnotherVMRunning(t *testing.T) {
 	t.Parallel()
 
+	// This test exercises the lock-conflict path specifically, not the
+	// entitlement check Start now also runs first — stub it present so the
+	// test isn't at the mercy of whether the `go test` binary itself
+	// happens to be signed with it (it normally isn't).
+	origProbe := entitlementProbe
+	entitlementProbe = func() int { return entitlementPresent }
+	t.Cleanup(func() { entitlementProbe = origProbe })
+
 	homeDir := t.TempDir()
 
 	// Simulate cluster "dev"'s vm-host already holding the host-wide lock,
