@@ -27,14 +27,16 @@
 // linux/arm64 never touch it (internal/substrate/hostproc runs Kubernetes
 // components directly as host processes).
 //
-// Every run clears out/payload before staging anything (see
-// clearStalePayload), so it never resumes a prior run and always
-// re-fetches every blob and image from scratch: goreleaser runs
-// rask-bundled-amd64 then rask-bundled-arm64 sequentially against the same
-// checkout (see .goreleaser.yml, --parallelism 1), and without clearing
-// first, a blob staged for one target is indistinguishable on disk from
-// one staged for another, so go:embed all:payload (fs_bundle.go) would
-// bundle whichever target ran first into whichever target ran last too.
+// Every run prunes out/payload's blobs and images down to exactly what
+// this -target needs before staging anything (see pruneStalePayload):
+// goreleaser runs rask-bundled-amd64 then rask-bundled-arm64 sequentially
+// against the same checkout (see .goreleaser.yml, --parallelism 1), and
+// without pruning first, a blob staged for one target is indistinguishable
+// on disk from one staged for another, so go:embed all:payload
+// (fs_bundle.go) would bundle whichever target ran first into whichever
+// target ran last too. Pruning to this run's own desired set (rather than
+// wiping everything) means re-running the same -target still finds its own
+// files already staged and skips re-fetching them.
 package main
 
 import (
@@ -89,11 +91,11 @@ func run() error {
 		return fmt.Errorf("-target must be one of linux/amd64, linux/arm64, darwin/arm64; got %q", *targetFlag)
 	}
 
-	if err := clearStalePayload(*out); err != nil {
-		return fmt.Errorf("clearing stale payload in %s: %w", *out, err)
-	}
-
 	urls := components.PinnedURLs(*k8sVersion, tgt.arch, tgt.guest)
+
+	if err := pruneStalePayload(*out, tgt.arch, urls); err != nil {
+		return fmt.Errorf("pruning stale payload in %s: %w", *out, err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -140,32 +142,55 @@ func run() error {
 	return nil
 }
 
-// clearStalePayload removes everything under out/payload left by a prior
-// run — blobs, staged images, manifest.json — except the git-tracked
-// out/payload/.gitkeep placeholder: removing that too would leave a
-// tracked file missing from the checkout, and payload/ must still exist
-// for fs_bundle.go's `//go:embed all:payload` to have somewhere to embed
-// from even on an unstaged tree (see that file's doc comment). out/payload
-// not existing yet (a fresh checkout, or a -out never staged into) is not
-// an error.
+// pruneStalePayload removes out/payload/blobs and out/payload/images
+// entries that don't belong to this run's -target, so a leftover blob or
+// image staged for a different target (or a different k8sVersion) never
+// rides along in go:embed all:payload (fs_bundle.go) into a binary that
+// never asked for it — see this function's callers' doc comments for why
+// goreleaser can leave exactly that behind. Unlike a full wipe, this
+// leaves every entry this run does want in place, so download()'s and
+// imagebundle.Cache's own "skip if already present" checks still avoid
+// re-fetching them on a same-target rerun. out/payload/manifest.json is
+// left alone too: run always rewrites it unconditionally after staging.
 //
-// This is what actually fixes cross-target contamination: download()
-// below only skips a URL it finds already at dest, with no idea whether
-// that file was staged for this -target or a different one, so leaving a
-// prior run's files in place lets go:embed all:payload silently bundle
-// them into a target that never asked for them.
+// Blobs are pruned by exact filename: bundlepayload.BlobPath derives each
+// blob's filename purely from its source URL, so urls (this run's own
+// components.PinnedURLs result) already names the complete, exact set of
+// filenames this run wants — anything else under payload/blobs is stale.
 //
-// This intentionally does not try to distinguish "prior run staged this
-// exact -target" from "prior run staged a different -target": it always
-// clears, so every invocation re-downloads its full target from scratch.
-// bundle-payload has no separate host-side download cache the way a
-// running rask does (components.DefaultCache layers ~/.rask/cache in
-// front of network fetches — see internal/components/defaultcache.go —
-// but this command's plain http.Client never goes through it), so that
-// re-download cost is unavoidable here.
-func clearStalePayload(out string) error {
-	dir := filepath.Join(out, "payload")
+// Images are pruned by architecture subdirectory rather than by exact
+// filename: imagebundle.Cache partitions its cache directory by arch
+// (payload/images/{arch}/...), so any subdirectory whose name isn't
+// arch belongs to a different target and is removed wholesale; entries
+// under arch's own subdirectory are left for imagebundle.Cache's own
+// Ensure to skip or (re)fetch as needed. This is coarser than the blobs
+// case only because imagebundle's per-ref filename scheme
+// (sanitizeRef) is unexported and this command has no other way to name
+// an individual cached image file itself.
+//
+// out/payload not existing yet (a fresh checkout, or a -out never staged
+// into) is not an error.
+func pruneStalePayload(out string, arch components.Arch, urls []components.PinnedURL) error {
+	wantBlobs := make(map[string]bool, len(urls))
+	for _, u := range urls {
+		wantBlobs[filepath.Base(bundlepayload.BlobPath(u.URL))] = true
+	}
 
+	if err := pruneDirExcept(filepath.Join(out, "payload", "blobs"), wantBlobs); err != nil {
+		return fmt.Errorf("pruning stale blobs: %w", err)
+	}
+
+	if err := pruneDirExcept(filepath.Join(out, "payload", "images"), map[string]bool{string(arch): true}); err != nil {
+		return fmt.Errorf("pruning stale images: %w", err)
+	}
+
+	return nil
+}
+
+// pruneDirExcept removes every direct entry of dir whose name isn't in
+// keep. dir not existing yet is not an error, since there is then nothing
+// to prune.
+func pruneDirExcept(dir string, keep map[string]bool) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -176,7 +201,7 @@ func clearStalePayload(out string) error {
 	}
 
 	for _, e := range entries {
-		if e.Name() == ".gitkeep" {
+		if keep[e.Name()] {
 			continue
 		}
 
@@ -189,8 +214,8 @@ func clearStalePayload(out string) error {
 }
 
 // download fetches url into dest, skipping the request entirely if dest
-// already exists — clearStalePayload has already wiped out/payload before
-// run's loop calls this, so in practice that only happens if the same
+// already exists — either because pruneStalePayload left it in place from
+// an already-complete prior run of this same -target, or because the same
 // dest is requested twice within one run — and writing via a
 // same-directory temp file plus rename so a killed/interrupted run never
 // leaves a truncated blob at dest.
