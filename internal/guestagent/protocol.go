@@ -60,6 +60,27 @@ const (
 	// host — there is no shell in this guest to cat/tail anything, and no
 	// shared filesystem the way internal/substrate/hostproc has).
 	PathFile = "/file"
+
+	// PathTunnel accepts a GET whose query parameter "addr" (host:port)
+	// names an address to dial from inside the guest's own network
+	// namespace — unlike the gvisor-tap-vsock link itself, which only
+	// routes to this guest's single NIC address (Addr:Port above), a
+	// dial issued from inside the guest can reach anything the guest
+	// kernel's own routing table knows about: a pod IP via the CNI
+	// bridge, or a Service ClusterIP via kube-proxy's iptables/ipvs
+	// rules, both of which live in the guest's root network namespace
+	// alongside rask-init (PID 1). On a successful dial, the server
+	// hijacks the connection, writes a bare "HTTP/1.1 200 OK\r\n
+	// Content-Length: 0\r\n\r\n" handshake (a fully framed, zero-body
+	// response so the client can keep using net/http's own response
+	// parsing before switching the same buffered connection to raw
+	// relay), then copies bytes bidirectionally between the hijacked
+	// connection and the dialed one until either side closes. A failed
+	// dial (or a malformed addr) is reported as a normal, non-hijacked
+	// HTTP error response instead. See substrate.Runtime.PortForward's
+	// doc comment (internal/substrate/vz/vz.go) for why this exists
+	// instead of a second, vm-host-side control channel.
+	PathTunnel = "/tunnel"
 )
 
 // ExitCodeTrailer is the HTTP trailer PathExec's response sets to the

@@ -8,11 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/sivchari/rask/internal/bootstrap"
@@ -47,6 +49,7 @@ func serveAgent(result *bootstrap.Result) {
 
 	mux.HandleFunc(guestagent.PathExec, handleExec)
 	mux.HandleFunc(guestagent.PathFile, handleFile)
+	mux.HandleFunc(guestagent.PathTunnel, handleTunnel)
 
 	addr := fmt.Sprintf("%s:%d", guestagent.Addr, guestagent.Port)
 
@@ -192,4 +195,78 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// handleTunnel is the guest-side counterpart of
+// internal/substrate/vz/agentclient.go's Tunnel: it dials the "addr" query
+// parameter from inside this guest's own network namespace (see
+// guestagent.PathTunnel's doc comment for why that matters — it is the only
+// vantage point that can reach a pod or Service IP, unlike the
+// gvisor-tap-vsock link itself) and, once connected, relays raw bytes
+// between that connection and the caller's until either side closes or
+// r.Context() is done (canceled once ServeHTTP returns, which here only
+// happens after the relay itself finishes).
+func handleTunnel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+
+		return
+	}
+
+	addr := r.URL.Query().Get("addr")
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		http.Error(w, fmt.Sprintf("invalid addr %q: %v", addr, err), http.StatusBadRequest)
+
+		return
+	}
+
+	upstream, err := (&net.Dialer{}).DialContext(r.Context(), "tcp", addr)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+
+		return
+	}
+	defer func() { _ = upstream.Close() }()
+
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "hijacking not supported", http.StatusInternalServerError)
+
+		return
+	}
+
+	conn, bufrw, err := hj.Hijack()
+	if err != nil {
+		return
+	}
+	defer func() { _ = conn.Close() }()
+
+	// A fully framed, zero-body HTTP response (not the raw "OK" sentinel
+	// gvisor-tap-vsock's own /tunnel endpoint uses internally) so the
+	// client can parse it with net/http's own http.ReadResponse before
+	// reusing the same buffered connection for the raw relay below —
+	// see agentClient.Tunnel's doc comment for why that ordering matters.
+	if _, err := bufrw.WriteString("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"); err != nil {
+		return
+	}
+
+	if err := bufrw.Flush(); err != nil {
+		return
+	}
+
+	var wg sync.WaitGroup
+
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(upstream, conn)
+	}()
+
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(conn, upstream)
+	}()
+
+	wg.Wait()
 }

@@ -27,10 +27,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -554,24 +556,155 @@ func (r *Runtime) WriteFile(ctx context.Context, name string, path string, data 
 	return client.WriteFile(ctx, path, data)
 }
 
-// PortForward is not yet implemented for the vz substrate.
+// PortForward forwards localAddr on the host to remoteAddr inside the
+// cluster's guest VM, until ctx is canceled or the returned error channel is
+// read from.
 //
-// gvisor-tap-vsock's Forwards map (network.go) is fixed at
-// virtualnetwork.New time, before the guest even exists, to exactly two
-// entries: the apiserver port (already covered by Start's kubeconfig
-// rewriting) and the guest-agent port (covered by Exec/WriteFile). Forwarding
-// an arbitrary third guest address would need either a dynamic forwarder
-// (gvisor-tap-vsock has no public API for adding one after New) or dialing
-// through the guest-agent's own network namespace, which is more machinery
-// than v1 needs: no cmd/rask command calls PortForward today (see
-// substrate.Runtime's doc comment), so this returns a clear error instead
-// of a half-working implementation.
-func (r *Runtime) PortForward(_ context.Context, name string, _, _ string) (string, <-chan error, error) {
-	if _, ok := r.readPID(name); !ok {
-		return "", nil, fmt.Errorf("vz: cluster %q is not running", name)
+// Design: Runtime.PortForward is called from whatever CLI invocation asked
+// for it ("rask port-forward" or a pkg/cluster caller), a different,
+// possibly much later process than the "rask create" invocation that
+// actually owns the running VM — Runtime.Start's own process has long since
+// exited by the time this runs, exactly the constraint Stop/Delete already
+// solve by reading state.go's persisted vmState instead of holding any
+// in-memory reference. Three shapes were considered:
+//
+//   - Add a new control endpoint to the vm-host process (vmhost.go), which
+//     already owns the gvisor-tap-vsock virtualnetwork.VirtualNetwork
+//     (network.go) and could expose it for a later process to ask it to
+//     open a forward. Rejected: that network's own stack has a single
+//     static route, to its 192.168.127.0/24 tap subnet (see network.go's
+//     createStack) — it can dial the guest's one NIC address
+//     (192.168.127.2) but has no route to anything the guest's own kernel
+//     routes internally (a pod IP via the CNI bridge, or a Service
+//     ClusterIP via kube-proxy's iptables/ipvs rules), which live in a
+//     different subnet entirely. Reaching those requires the dial to
+//     happen from inside the guest's network namespace, not from
+//     gvisor-tap-vsock's emulated one, so a vm-host-side endpoint doing
+//     this dial itself wouldn't work regardless — see the next option.
+//   - Dial directly from this process through gvisor-tap-vsock's own
+//     host-side entry point. Rejected for the same routing reason: even
+//     with a live *virtualnetwork.VirtualNetwork in hand, its stack still
+//     can't reach anything past the guest's single NIC address.
+//   - What this implements: rask-init's existing guest control agent
+//     (internal/guestagent, already reachable cross-process through
+//     vmState.AgentHostPort — the same forwarded port Exec/WriteFile
+//     already use, no vm-host or state.go change needed at all) grows one
+//     more endpoint, guestagent.PathTunnel, that dials remoteAddr from
+//     inside the guest's own network namespace — the one vantage point
+//     that actually has routes to pod/Service IPs — and relays raw bytes
+//     over a hijacked connection (agentClient.Tunnel). This is the guest's
+//     existing live RPC channel, not internal/guestconfig (also read
+//     during this investigation): that package is a one-shot, boot-time
+//     file staged into a cpio overlay and read once by rask-init before
+//     bootstrap.Boot ever runs (see clusterconfig.go) — there is no
+//     mechanism there for an on-demand, per-call request/response, so it
+//     does not fit this use case, unlike guestagent's already-live HTTP
+//     control surface.
+//
+// Lifetime: the host-side TCP listener this opens lives entirely in the
+// calling process, not in vm-host — closing it (on ctx cancellation, or
+// listener.Accept erroring) is enough to stop accepting new local
+// connections; each already-accepted connection's own relay goroutines
+// (relayThroughGuest) are independently unblocked by ctx the same way, so
+// nothing here can leak a goroutine or a port in vm-host, since vm-host is
+// never involved at all.
+func (r *Runtime) PortForward(ctx context.Context, name string, localAddr, remoteAddr string) (string, <-chan error, error) {
+	client, err := r.agentClientFor(name)
+	if err != nil {
+		return "", nil, err
 	}
 
-	return "", nil, errors.New("vz: PortForward is not implemented yet for the vz substrate; see PortForward's doc comment")
+	listener, err := net.Listen("tcp", localAddr)
+	if err != nil {
+		return "", nil, fmt.Errorf("vz: listening on %s: %w", localAddr, err)
+	}
+
+	errCh := make(chan error, 1)
+
+	go func() {
+		defer close(errCh)
+		defer func() { _ = listener.Close() }()
+
+		var wg sync.WaitGroup
+
+		go func() {
+			<-ctx.Done()
+			_ = listener.Close()
+		}()
+
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				if ctx.Err() != nil {
+					wg.Wait()
+
+					return
+				}
+
+				errCh <- fmt.Errorf("vz: accepting connection on %s: %w", localAddr, err)
+
+				return
+			}
+
+			wg.Add(1)
+
+			go func() {
+				defer wg.Done()
+				relayThroughGuest(ctx, client, conn, remoteAddr)
+			}()
+		}
+	}()
+
+	return listener.Addr().String(), errCh, nil
+}
+
+// relayThroughGuest opens a tunnel to remoteAddr through the guest control
+// agent (agentClient.Tunnel) and copies bytes bidirectionally between it and
+// conn until either side closes or ctx is done. conn is always closed before
+// returning; a failed Tunnel call (e.g. the guest couldn't dial remoteAddr)
+// simply closes conn with nothing relayed, mirroring
+// internal/substrate/hostproc's relay, which does the same for a failed
+// direct dial.
+func relayThroughGuest(ctx context.Context, client *agentClient, conn net.Conn, remoteAddr string) {
+	defer func() { _ = conn.Close() }()
+
+	upstream, err := client.Tunnel(ctx, remoteAddr)
+	if err != nil {
+		return
+	}
+	defer func() { _ = upstream.Close() }()
+
+	// io.Copy below only returns once a Read/Write errors; it does not
+	// itself observe ctx. Closing both connections when ctx is done is
+	// what actually unblocks them on cancellation — same reasoning as
+	// internal/substrate/hostproc's relay.
+	stopWatching := make(chan struct{})
+	defer close(stopWatching)
+
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+			_ = upstream.Close()
+		case <-stopWatching:
+		}
+	}()
+
+	var wg sync.WaitGroup
+
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(upstream, conn)
+	}()
+
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(conn, upstream)
+	}()
+
+	wg.Wait()
 }
 
 func (r *Runtime) agentClientFor(name string) (*agentClient, error) {

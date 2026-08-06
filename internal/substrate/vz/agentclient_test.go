@@ -6,11 +6,13 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -255,5 +257,136 @@ func TestAgentClient_WriteFile(t *testing.T) {
 
 	if string(gotBody) != "payload" {
 		t.Errorf("server saw body = %q, want %q", gotBody, "payload")
+	}
+}
+
+func TestAgentClient_Tunnel_RelaysDataBidirectionally(t *testing.T) {
+	t.Parallel()
+
+	upstream, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listening upstream: %v", err)
+	}
+	defer func() { _ = upstream.Close() }()
+
+	go func() {
+		conn, err := upstream.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+
+		buf := make([]byte, 64)
+
+		n, _ := conn.Read(buf)
+		_, _ = conn.Write(buf[:n])
+	}()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc(guestagent.PathTunnel, fakeTunnelHandler())
+
+	c := newTestAgentClient(t, mux)
+
+	conn, err := c.Tunnel(context.Background(), upstream.Addr().String())
+	if err != nil {
+		t.Fatalf("Tunnel: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	if _, err := conn.Write([]byte("ping")); err != nil {
+		t.Fatalf("writing to tunnel: %v", err)
+	}
+
+	buf := make([]byte, 4)
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		t.Fatalf("reading echoed data: %v", err)
+	}
+
+	if string(buf) != "ping" {
+		t.Errorf("echoed data = %q, want %q", buf, "ping")
+	}
+}
+
+func TestAgentClient_Tunnel_UpstreamDialFailureErrors(t *testing.T) {
+	t.Parallel()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc(guestagent.PathTunnel, fakeTunnelHandler())
+
+	c := newTestAgentClient(t, mux)
+
+	// Nothing listens on this loopback port, so the fake guest-side
+	// handler's dial fails before it ever hijacks the connection —
+	// exercising Tunnel's non-hijacked error response path.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserving an unused port: %v", err)
+	}
+
+	unusedAddr := l.Addr().String()
+	if err := l.Close(); err != nil {
+		t.Fatalf("closing reserved listener: %v", err)
+	}
+
+	if _, err := c.Tunnel(context.Background(), unusedAddr); err == nil {
+		t.Fatal("Tunnel to an address nothing is listening on = nil error, want error")
+	}
+}
+
+// fakeTunnelHandler stands in for cmd/rask-init's handleTunnel (linux-only,
+// so not importable from this darwin-only package's tests): it implements
+// the exact handshake protocol guestagent.PathTunnel's doc comment
+// describes — dial "addr", hijack, write a zero-body HTTP/1.1 200 response,
+// then relay raw bytes — so agentClient.Tunnel's client-side handshake is
+// exercised against a real implementation of the wire protocol rather than
+// a mock shaped around agentClient's own expectations.
+func fakeTunnelHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		addr := r.URL.Query().Get("addr")
+
+		upstream, err := net.Dial("tcp", addr)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+
+			return
+		}
+		defer func() { _ = upstream.Close() }()
+
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			http.Error(w, "hijacking not supported", http.StatusInternalServerError)
+
+			return
+		}
+
+		conn, bufrw, err := hj.Hijack()
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+
+		if _, err := bufrw.WriteString("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"); err != nil {
+			return
+		}
+
+		if err := bufrw.Flush(); err != nil {
+			return
+		}
+
+		var wg sync.WaitGroup
+
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+			_, _ = io.Copy(upstream, conn)
+		}()
+
+		go func() {
+			defer wg.Done()
+			_, _ = io.Copy(conn, upstream)
+		}()
+
+		wg.Wait()
 	}
 }
