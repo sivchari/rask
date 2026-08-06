@@ -18,9 +18,10 @@ import (
 // host-reachable socket: the same gap documented at vz.go's Start doc
 // comment for Config.SeedPath (a host-readable path into the guest's own
 // disk). Closing it needs a guest-side import path through rask-init's
-// control agent (like Exec/WriteFile — see agentclient.go), which does not
-// exist yet; this returns a clear error instead of a half-working
-// implementation, matching PortForward's precedent in vz.go.
+// control agent — like Exec/WriteFile, and like PortForward's guest-side
+// tunnel endpoint (see agentclient.go and guestagent.PathTunnel) — which
+// does not exist yet for image import specifically; this returns a clear
+// error instead of a half-working implementation.
 func (r *Runtime) LoadImages(_ context.Context, name string, _ []substrate.ImageSource) error {
 	if _, ok := r.readPID(name); !ok {
 		return fmt.Errorf("vz: cluster %q is not running", name)

@@ -3,11 +3,13 @@
 package vz
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -23,12 +25,16 @@ import (
 // virtualnetwork.New time (see network.go).
 type agentClient struct {
 	baseURL string
+	addr    string
 	http    *http.Client
 }
 
 func newAgentClient(agentHostPort int) *agentClient {
+	addr := fmt.Sprintf("127.0.0.1:%d", agentHostPort)
+
 	return &agentClient{
-		baseURL: fmt.Sprintf("http://127.0.0.1:%d", agentHostPort),
+		baseURL: "http://" + addr,
+		addr:    addr,
 		http:    &http.Client{},
 	}
 }
@@ -196,4 +202,80 @@ func (c *agentClient) ReadFile(ctx context.Context, path string) ([]byte, error)
 	}
 
 	return data, nil
+}
+
+// Tunnel opens a connection to remoteAddr from inside the guest (see
+// guestagent.PathTunnel's doc comment for why this has to be dialed
+// guest-side rather than through the gvisor-tap-vsock link directly) and
+// returns it as a net.Conn the caller can relay bytes over until it closes
+// it or ctx is canceled.
+//
+// This dials c.addr directly (bypassing c.http, which has no API for
+// handing back a hijacked connection) because the guest agent's response
+// to a successful request is not an ordinary HTTP response: the request is
+// written as plain HTTP so PathTunnel's http.ServeMux still routes it
+// normally, but the guest then hijacks the connection and, from that point
+// on, an initial handshake response is followed immediately by raw relayed
+// bytes with no further HTTP framing (see PathTunnel's doc comment).
+//
+// The handshake response is nonetheless a complete, valid, zero-body HTTP
+// response (not a bespoke sentinel), read with the standard
+// http.ReadResponse against the same bufio.Reader that keeps being used
+// for every read afterward (tunnelConn) — required so any tunnel bytes the
+// guest already sent in the same TCP segment as the handshake, and that
+// therefore already landed in that Reader's internal buffer, aren't lost by
+// switching to reading net.Conn directly once the handshake is parsed.
+func (c *agentClient) Tunnel(ctx context.Context, remoteAddr string) (net.Conn, error) {
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", c.addr)
+	if err != nil {
+		return nil, fmt.Errorf("vz: dialing guest agent for tunnel: %w", err)
+	}
+
+	u := c.baseURL + guestagent.PathTunnel + "?" + url.Values{"addr": {remoteAddr}}.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		_ = conn.Close()
+
+		return nil, err
+	}
+
+	if err := req.Write(conn); err != nil {
+		_ = conn.Close()
+
+		return nil, fmt.Errorf("vz: writing tunnel request: %w", err)
+	}
+
+	br := bufio.NewReader(conn)
+
+	resp, err := http.ReadResponse(br, req)
+	if err != nil {
+		_ = conn.Close()
+
+		return nil, fmt.Errorf("vz: reading tunnel handshake: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(resp.Body)
+		_ = conn.Close()
+
+		return nil, fmt.Errorf("vz: tunnel to %s: status %s: %s", remoteAddr, resp.Status, data)
+	}
+
+	return &tunnelConn{Conn: conn, r: br}, nil
+}
+
+// tunnelConn is agentClient.Tunnel's returned net.Conn: reads go through r
+// (the same bufio.Reader the handshake response was parsed from, so any
+// tunnel bytes it already buffered are not lost — see Tunnel's doc
+// comment), writes go straight to the underlying connection since nothing
+// buffers those client-side.
+type tunnelConn struct {
+	net.Conn
+	r *bufio.Reader
+}
+
+func (t *tunnelConn) Read(p []byte) (int, error) {
+	return t.r.Read(p)
 }
