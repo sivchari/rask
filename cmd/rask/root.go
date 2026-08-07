@@ -33,7 +33,7 @@ func newRootCommand(rt substrate.Runtime, homeDir string) *cobra.Command {
 	root.AddCommand(
 		newCreateCommand(rt, homeDir),
 		newDeleteCommand(rt, homeDir),
-		newGetCommand(homeDir),
+		newGetCommand(rt, homeDir),
 		newExportCommand(homeDir),
 		newLoadCommand(rt, homeDir),
 		newPullCommand(rt),
