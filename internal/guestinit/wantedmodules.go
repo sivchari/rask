@@ -21,6 +21,16 @@ package guestinit
 //     (its filesystem).
 //   - bridge CNI: bridge, veth, br_netfilter (bridge CNI plugin +
 //     containerd's CNI wiring).
+//   - dummy: registers the "dummy" net driver (drivers/net/dummy.ko), which
+//     backs vishvananda/netlink's netlink.Dummy link type used by upstream
+//     agents to create a stand-alone virtual interface with no peer —
+//     found live via the eks-pod-identity-agent, which creates one
+//     (pod-id-link0) to hold the link-local IPv4 address it uses to proxy
+//     the container credentials endpoint. Without this module, RTNETLINK
+//     rejects the RTM_NEWLINK request outright ("ip link add pod-id-link0
+//     type dummy" => "RTNETLINK answers: Not supported"), which the agent
+//     logs as "Unable to create interface pod-id-link0: operation not
+//     supported" and then fails to start.
 //   - netfilter/iptables (legacy API): everything kube-proxy's iptables
 //     mode needs (ip(6)_tables and the iptable_*/xt_*/nf_* modules its
 //     rendered iptables-restore rule set exercises).
@@ -94,6 +104,8 @@ var WantedModules = []string{
 	"virtio_blk", "ext4",
 
 	"bridge", "veth", "br_netfilter",
+
+	"dummy",
 
 	"xfrm_user",
 
