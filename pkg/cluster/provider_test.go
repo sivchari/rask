@@ -336,6 +336,45 @@ func TestProvider_LoadImages_PassesReferencesThroughAndRequiresExistingCluster(t
 	}
 }
 
+func TestProvider_PortForward_PassesArgumentsThroughAndRequiresExistingCluster(t *testing.T) {
+	t.Parallel()
+
+	homeDir := t.TempDir()
+
+	rt := &fakeRuntime{portForwardErrCh: make(chan error)}
+	p := NewProviderWithRuntime(rt, homeDir)
+
+	if _, _, err := p.PortForward(context.Background(), "dev", "127.0.0.1:0", "10.0.0.5:80"); err == nil {
+		t.Fatal("PortForward() on a non-existent cluster = nil error, want error")
+	}
+
+	if len(rt.portForwardCalls) != 0 {
+		t.Errorf("portForwardCalls = %+v, want no calls before the cluster exists", rt.portForwardCalls)
+	}
+
+	if err := os.MkdirAll(filepath.Join(homeDir, "clusters", "dev"), 0o755); err != nil {
+		t.Fatalf("seeding cluster dir: %v", err)
+	}
+
+	boundAddr, errs, err := p.PortForward(context.Background(), "dev", "127.0.0.1:0", "10.0.0.5:80")
+	if err != nil {
+		t.Fatalf("PortForward: %v", err)
+	}
+
+	if boundAddr != "127.0.0.1:41000" {
+		t.Errorf("boundAddr = %q, want rt's return value forwarded verbatim", boundAddr)
+	}
+
+	if errs != (<-chan error)(rt.portForwardErrCh) {
+		t.Error("errs channel is not the same channel rt.PortForward returned")
+	}
+
+	want := []portForwardCall{{name: "dev", localAddr: "127.0.0.1:0", remoteAddr: "10.0.0.5:80"}}
+	if len(rt.portForwardCalls) != 1 || rt.portForwardCalls[0] != want[0] {
+		t.Errorf("portForwardCalls = %+v, want %+v", rt.portForwardCalls, want)
+	}
+}
+
 // TestProvider_DefaultCoreDNSImageMatchesManifestsPackage guards against
 // this package's default-image fallback in Create silently drifting from
 // internal/manifests.CoreDNSImage.

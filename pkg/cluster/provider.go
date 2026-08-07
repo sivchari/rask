@@ -259,6 +259,41 @@ func (p *Provider) LoadImages(ctx context.Context, name string, images []ImageSo
 	return p.rt.LoadImages(ctx, name, substrateImages)
 }
 
+// PortForward opens a TCP tunnel from localAddr on the host to remoteAddr
+// inside cluster name, for a host process that needs to reach a
+// Service/Pod running inside the cluster — on macOS, vz runs the apiserver
+// and every workload inside a Linux guest VM, so a host process cannot
+// simply dial the cluster's 127.0.0.1:<NodePort> the way it could against a
+// Linux hostproc cluster. remoteAddr is interpreted from inside the
+// cluster: the in-guest address on vz, the host's own network namespace
+// address on hostproc.
+//
+// localAddr may use port 0 to let the OS pick a free port; the
+// actually-bound address is returned as boundAddr, so callers never need
+// the racy reserve-close-rebind pattern to learn which port ended up in
+// use.
+//
+// The forward's lifetime is tied to ctx: canceling it stops accepting new
+// connections and unwinds every in-flight relay. errs is closed exactly
+// once the forward has fully stopped, whether that was triggered by ctx
+// cancellation or a fatal error, and carries at most one value — a fatal
+// listener-accept error unrelated to cancellation. It never reports errors
+// for individual relayed connections; those simply close. Both current
+// substrates (vz, hostproc) implement this identically. Errors if the
+// cluster does not exist.
+func (p *Provider) PortForward(ctx context.Context, name string, localAddr, remoteAddr string) (boundAddr string, errs <-chan error, err error) {
+	exists, err := internalcluster.Exists(p.homeDir, name)
+	if err != nil {
+		return "", nil, err
+	}
+
+	if !exists {
+		return "", nil, fmt.Errorf("cluster %q does not exist", name)
+	}
+
+	return p.rt.PortForward(ctx, name, localAddr, remoteAddr)
+}
+
 // waitForCoreDNS polls the CoreDNS Deployment (applied by internal/manifests
 // during Create) until it reports at least one Ready replica.
 func (p *Provider) waitForCoreDNS(ctx context.Context, name string) error {
