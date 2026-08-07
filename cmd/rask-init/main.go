@@ -65,6 +65,15 @@ func main() {
 		fatalf("switching root: %v", err)
 	}
 
+	// Must run before the second mountBase() call below: makeRootShared
+	// marks "/" MS_REC|MS_SHARED, and any mount created under an already-
+	// shared mountpoint automatically joins its peer group — doing this
+	// first means /proc, /sys, /dev etc. (and everything mounted later,
+	// e.g. the data disk) all end up shared too, not just "/" itself.
+	if err := makeRootShared(); err != nil {
+		fmt.Printf("RASK-INIT-ROOT-SHARED-FAILED err=%v\n", err)
+	}
+
 	// proc/sys/dev were mounted at the initramfs's paths, which are no
 	// longer reachable after chroot (they were never moved, only the
 	// tmpfs root itself was) — mount them again fresh under the new

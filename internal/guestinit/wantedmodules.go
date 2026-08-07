@@ -70,6 +70,21 @@ package guestinit
 //     that links against its exported symbols: nf_nat, iptable_nat,
 //     xt_nat, xt_conntrack, xt_MASQUERADE, xt_CT) failed to load with
 //     "Unknown symbol nf_ct_*" until this was added first in this list.
+//   - xfrm_user: registers the NETLINK_XFRM netlink family
+//     (net/xfrm/xfrm_user.c's netlink_kernel_create call). Without it, any
+//     process that opens a NETLINK_XFRM socket — including
+//     vishvananda/netlink's netlink.NewHandle() called with no arguments,
+//     which unconditionally opens all of SupportedNlFamilies (ROUTE, XFRM,
+//     NETFILTER) and fails entirely if even one of them errors — gets
+//     EPROTONOSUPPORT, even though CONFIG_XFRM itself is built in
+//     (/proc/net/xfrm_stat exists). This breaks any Go networking tool that
+//     calls NewHandle() this way (found live via the upstream
+//     eks-pod-identity-agent, which never touches IPsec/XFRM but still
+//     fails to start over this) — Calico, Cilium, flannel and multus all
+//     have the same NewHandle() call site, so this is not
+//     workload-specific. xfrm_algo is not listed separately: it's
+//     xfrm_user's only modules.dep dependency and ResolveLoadOrder already
+//     pulls it in transitively.
 var WantedModules = []string{
 	"crc32c_generic",
 
@@ -79,6 +94,8 @@ var WantedModules = []string{
 	"virtio_blk", "ext4",
 
 	"bridge", "veth", "br_netfilter",
+
+	"xfrm_user",
 
 	"ip_tables", "iptable_filter", "iptable_nat", "iptable_mangle",
 	"ip6_tables", "ip6table_filter", "ip6table_nat", "ip6table_mangle",
