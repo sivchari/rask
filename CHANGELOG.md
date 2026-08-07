@@ -1,5 +1,8 @@
 # Changelog
 
+## [v0.4.2](https://github.com/sivchari/rask/compare/v0.4.1...v0.4.2) - 2026-08-07
+- fix(vz): load xfrm_user and make the guest root rshared by @sivchari in https://github.com/sivchari/rask/pull/33
+
 ## [v0.4.1](https://github.com/sivchari/rask/compare/v0.4.0...v0.4.1) - 2026-08-07
 - feat(hostproc): detect the two in-container failures that fail unintelligibly by @sivchari in https://github.com/sivchari/rask/pull/31
 
