@@ -35,6 +35,12 @@ type fakeRuntime struct {
 	stopCalls        []string
 	deleteCalls      []string
 	loadImagesCalls  []loadImagesCall
+	portForwardCalls []portForwardCall
+
+	// portForwardErrCh, if set, is returned verbatim by PortForward so a
+	// test can assert Provider.PortForward returns rt's error channel
+	// unchanged (by identity) rather than a copy or a new one.
+	portForwardErrCh chan error
 }
 
 type prebootPathCall struct {
@@ -45,6 +51,12 @@ type prebootPathCall struct {
 type loadImagesCall struct {
 	name       string
 	references []string
+}
+
+type portForwardCall struct {
+	name       string
+	localAddr  string
+	remoteAddr string
 }
 
 func (f *fakeRuntime) Create(_ context.Context, name string, opts substrate.StartOptions) error {
@@ -96,8 +108,14 @@ func (f *fakeRuntime) WriteFile(_ context.Context, _ string, _ string, _ []byte)
 	return errors.New("fakeRuntime: WriteFile not implemented")
 }
 
-func (f *fakeRuntime) PortForward(_ context.Context, _ string, _, _ string) (string, <-chan error, error) {
-	return "", nil, errors.New("fakeRuntime: PortForward not implemented")
+// PortForward records the call and returns a deterministic, obviously-fake
+// bound address and (if set) rt.portForwardErrCh, so a test can assert
+// Provider.PortForward both forwards its arguments unchanged and returns
+// rt's results verbatim.
+func (f *fakeRuntime) PortForward(_ context.Context, name string, localAddr, remoteAddr string) (string, <-chan error, error) {
+	f.portForwardCalls = append(f.portForwardCalls, portForwardCall{name: name, localAddr: localAddr, remoteAddr: remoteAddr})
+
+	return "127.0.0.1:41000", f.portForwardErrCh, nil
 }
 
 func (f *fakeRuntime) LoadImages(_ context.Context, name string, images []substrate.ImageSource) error {

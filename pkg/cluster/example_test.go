@@ -48,6 +48,13 @@ func Example_fjordIntegration() {
 	// real processes/VMs on, which a godoc example must not do as a side
 	// effect of running "go test".
 
+	// Once the cluster is up, an EKS access-entry implementation running
+	// on the host can reach a Service/Pod inside it with PortForward —
+	// necessary on macOS, where vz runs everything inside a Linux guest
+	// VM the host cannot dial directly:
+	//   boundAddr, errs, err := provider.PortForward(ctx, clusterName, "127.0.0.1:0", serviceClusterIP+":443")
+	// Not called in this example, for the same reason Create above isn't.
+
 	fmt.Println(opts.ComponentDir)
 	// Output: /var/lib/fjord/eksd/kubernetes-server/bin
 }
