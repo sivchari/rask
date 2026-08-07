@@ -217,6 +217,22 @@ func (r *Runtime) Start(ctx context.Context, name string, opts substrate.StartOp
 		return err
 	}
 
+	// Before anything writes to disk: kubelet needs cpu/memory/pids
+	// delegated to this process's cgroup to build its /kubepods tree (see
+	// ensureCgroupControllersDelegated).
+	if err := ensureCgroupControllersDelegated(); err != nil {
+		return err
+	}
+
+	dataDir := r.dataDir(name)
+
+	// Also before anything writes to disk: containerd's overlayfs
+	// snapshotter cannot layer image content onto a data directory that is
+	// itself already on overlayfs (see ensureDataDirNotOverlayfs).
+	if err := ensureDataDirNotOverlayfs(dataDir); err != nil {
+		return err
+	}
+
 	src := r.componentSource(opts)
 
 	paths, err := src.Resolve(ctx, components.DefaultK8sVersion, arch)
@@ -228,8 +244,6 @@ func (r *Runtime) Start(ctx context.Context, name string, opts substrate.StartOp
 	if err != nil {
 		return err
 	}
-
-	dataDir := r.dataDir(name)
 
 	// Must happen before bootstrap.Boot: every preboot file is meant to
 	// be readable by a component Boot launches (e.g. an authentication
