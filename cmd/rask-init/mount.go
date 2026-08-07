@@ -49,6 +49,48 @@ func mountBase() {
 			fmt.Printf("rask-init: mkdir %s: %v\n", dir, err)
 		}
 	}
+
+	// /tmp: root here is always a tmpfs (the initramfs's anonymous
+	// rootfs, or newRoot after switchRoot — see switchRoot's doc
+	// comment), so a plain directory is enough; no separate mount is
+	// needed. Nothing in rask's own boot DAG uses /tmp, but runc writes
+	// its per-exec process spec there via os.CreateTemp's default
+	// TMPDIR (unset in this guest) — with no /tmp directory at all,
+	// `kubectl exec` fails with "open /tmp/runc-processNNN: no such
+	// file or directory". Re-run on every mountBase call (see
+	// ensureStickyDir's doc comment for why the second, post-switchRoot
+	// call matters here too).
+	if err := ensureStickyDir("/tmp", 0o777|os.ModeSticky); err != nil {
+		fmt.Printf("rask-init: %v\n", err)
+	}
+}
+
+// ensureStickyDir creates dir if missing and ensures its mode is exactly
+// perm, including any special bits such as the sticky bit — MkdirAll's mode
+// argument alone isn't reliable for that: it is subject to the process
+// umask, and (for /tmp specifically) switchRoot's copyTree recreates
+// directories via info.Mode().Perm(), which masks to the low 9 permission
+// bits and silently drops special bits when copying the initramfs's /tmp
+// into newRoot. An explicit Chmod after MkdirAll guarantees perm regardless
+// of umask or how the directory came to exist.
+//
+// perm's special bits must be given as fs.FileMode flags (e.g.
+// os.ModeSticky), not as a raw traditional-octal value like 0o1777: unlike
+// the low 9 permission bits, which fs.FileMode defines identically to their
+// Unix meaning, Go's setuid/setgid/sticky bits live at different bit
+// positions in fs.FileMode than in a raw Unix mode_t, and MkdirAll/Chmod
+// only look for Go's bits — passing 0o1777 verbatim silently creates a
+// plain 0o777 directory with no sticky bit set at all, no error either.
+func ensureStickyDir(dir string, perm os.FileMode) error {
+	if err := os.MkdirAll(dir, perm); err != nil {
+		return fmt.Errorf("mkdir %s: %w", dir, err)
+	}
+
+	if err := os.Chmod(dir, perm); err != nil {
+		return fmt.Errorf("chmod %s: %w", dir, err)
+	}
+
+	return nil
 }
 
 // newRoot is the tmpfs mount switchRoot moves the running system onto.
