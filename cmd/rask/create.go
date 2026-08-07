@@ -73,7 +73,7 @@ func newCreateClusterCommand(rt substrate.Runtime, homeDir string) *cobra.Comman
 	cmd.Flags().StringArrayVar(&flags.apiserverArgs, apiserverArgFlag, nil,
 		`extra kube-apiserver flag as key=value (repeatable, kubeadm-style, no leading "--"), appended after rask's own flags; a key naming a rask-managed flag is rejected`)
 	cmd.Flags().StringArrayVar(&flags.prebootFiles, prebootFileFlag, nil,
-		`file to place into the cluster's data directory before any process starts, as src=dest (repeatable); dest is relative to <data-dir>/preboot (see pkg/cluster.PrebootFile)`)
+		`file to place into the cluster's data directory before any process starts, as src=dest (repeatable); for dest's in-cluster absolute path (e.g. for --apiserver-arg), run "rask get preboot-path" (see pkg/cluster.PrebootFile)`)
 	cmd.Flags().StringVar(&flags.componentDir, componentDirFlag, "",
 		"local directory containing pre-extracted kube-apiserver/kube-controller-manager/kube-scheduler/kubelet/kubectl binaries, used instead of rask's default dl.k8s.io download cache")
 	cmd.Flags().StringVar(&flags.coreDNSImage, coreDNSImageFlag, "",
