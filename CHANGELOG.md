@@ -1,5 +1,8 @@
 # Changelog
 
+## [v0.3.1](https://github.com/sivchari/rask/compare/v0.3.0...v0.3.1) - 2026-08-07
+- fix(rask-init): create /tmp so kubectl exec works in vz guests by @sivchari in https://github.com/sivchari/rask/pull/27
+
 ## [v0.2.2](https://github.com/sivchari/rask/compare/v0.2.1...v0.2.2) - 2026-08-07
 - feat(pkg/cluster): expose Provider.PortForward by @sivchari in https://github.com/sivchari/rask/pull/25
 
