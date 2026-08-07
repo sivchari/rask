@@ -1,5 +1,8 @@
 # Changelog
 
+## [v0.4.3](https://github.com/sivchari/rask/compare/v0.4.2...v0.4.3) - 2026-08-07
+- fix(vz): load the dummy module in the guest by @sivchari in https://github.com/sivchari/rask/pull/35
+
 ## [v0.4.2](https://github.com/sivchari/rask/compare/v0.4.1...v0.4.2) - 2026-08-07
 - fix(vz): load xfrm_user and make the guest root rshared by @sivchari in https://github.com/sivchari/rask/pull/33
 
