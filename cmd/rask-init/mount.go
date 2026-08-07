@@ -150,6 +150,43 @@ func switchRoot() error {
 	return nil
 }
 
+// makeRootShared is the equivalent of `mount --make-rshared /`, applied to
+// the tmpfs switchRoot just moved onto "/" (not the initramfs's original
+// anonymous rootfs — a freshly created mount always starts out MS_PRIVATE
+// regardless of what its parent's propagation was, and MS_MOVE preserves a
+// mount's own propagation setting rather than inheriting it from wherever
+// it gets moved to, so this only has any effect once called against the
+// real final root, after switchRoot has returned).
+//
+// Every host Linux distribution rask documents running containerd/runc on
+// already has its root mount marked shared by its own init system (systemd
+// does this unconditionally); this vz guest's PID 1 is rask-init itself, so
+// nothing else ever does it here. Without it, every mountpoint in this
+// guest stays MS_PRIVATE, which is what a container spec generator checks
+// for when a pod requests a bind mount with mountPropagation
+// Bidirectional/HostToContainer (e.g. kube-network-policies mounting
+// /var/run/netns to reach other pods' netns) — runc's own spec validation
+// rejects those outright with "... is mounted on ... but it is not a
+// shared or slave mount" if the covering mount isn't shared or slave.
+// MS_REC makes this recursive so every mount created under "/" from this
+// point on (mountBase's second pass, formatAndMountDataDisk, etc.) joins
+// the same shared peer group automatically, matching real
+// switch_root(8)+systemd behavior on a native Linux host.
+//
+// Failure here is logged, not fatal (see main.go's call site): a guest
+// that boots with a private root still runs every other workload fine —
+// only pods that specifically request a shared/slave-propagated bind mount
+// fail, with their own clear error at pod creation time, so halting the
+// entire cluster's boot over this would trade a narrow, diagnosable
+// failure for a total one.
+func makeRootShared() error {
+	if err := syscall.Mount("", "/", "", syscall.MS_REC|syscall.MS_SHARED, ""); err != nil {
+		return fmt.Errorf("make-rshared /: %w", err)
+	}
+
+	return nil
+}
+
 // copyTree recursively copies every file, directory and symlink under src
 // into dst, skipping excludedFromCopy paths and preserving symlink targets
 // and regular file permissions (device nodes are deliberately not copied:
