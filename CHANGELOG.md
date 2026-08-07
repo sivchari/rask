@@ -1,5 +1,8 @@
 # Changelog
 
+## [v0.4.1](https://github.com/sivchari/rask/compare/v0.4.0...v0.4.1) - 2026-08-07
+- feat(hostproc): detect the two in-container failures that fail unintelligibly by @sivchari in https://github.com/sivchari/rask/pull/31
+
 ## [v0.3.2](https://github.com/sivchari/rask/compare/v0.3.1...v0.3.2) - 2026-08-07
 - feat(cli): add rask get preboot-path by @sivchari in https://github.com/sivchari/rask/pull/29
 

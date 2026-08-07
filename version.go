@@ -4,4 +4,4 @@
 package rask
 
 // Version is the current version of rask.
-const Version = "0.4.0"
+const Version = "0.4.1"
